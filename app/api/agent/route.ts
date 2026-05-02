@@ -20,10 +20,20 @@ export async function POST(req: Request) {
   const body = await req.json()
   const uiMessages: UIMessage[] = body?.messages ?? []
   const hasPriorAssistant = uiMessages.some((m) => m.role === "assistant")
+  // Optional adversarial review pass — appends a Step 8 instruction so the
+  // agent self-critiques the dossier in the same stream. Off by default
+  // (extra tokens) — controlled by a toggle in the UI.
+  const criticEnabled = Boolean(body?.criticEnabled)
 
+  const criticAddendum = `
+
+## Step 8 · Adversarial self-review (critic pass)
+After emitting the JSON dossier, take ONE more pass as a sceptical senior climate officer would. List 3–5 weaknesses across the WHOLE proposal — not just funding. Examples to consider: Are the interventions actually heterogeneous, or did you default to similar suggestions? Is evidence over-stated for any "strong" rating? Did you under-weight maintenance burden? Did the equity audit gloss over a real fairness risk? Are there feasible interventions you skipped? For each weakness, propose either (a) a specific revision to the dossier or (b) accept the trade-off explicitly. If revisions are warranted, emit a SECOND fenced \`\`\`json block with the updated dossier (same schema) — it must be the LAST json block in your response.`
+
+  const baseSystem = criticEnabled ? `${systemPrompt}${criticAddendum}` : systemPrompt
   const systemText = hasPriorAssistant
-    ? `${systemPrompt}\n\n# Follow-up mode\n\nThe planner is asking a follow-up question about the dossier you just produced. Answer concisely with the same evidence-led tone. You can call tools again if a question demands fresh data. If the user asks you to revise interventions or funds, emit a new \`\`\`json block with the updated dossier (same schema). Otherwise, no JSON block needed.`
-    : systemPrompt
+    ? `${baseSystem}\n\n# Follow-up mode\n\nThe planner is asking a follow-up question about the dossier you just produced. Answer concisely with the same evidence-led tone. You can call tools again if a question demands fresh data. If the user asks you to revise interventions or funds, emit a new \`\`\`json block with the updated dossier (same schema). Otherwise, no JSON block needed.`
+    : baseSystem
 
   let convoMessages: ModelMessage[]
   if (!hasPriorAssistant) {

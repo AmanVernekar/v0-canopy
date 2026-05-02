@@ -1,14 +1,17 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { HelpCircle } from "lucide-react"
 import { AgentPanel } from "@/components/agent-panel"
 // Static import keeps lib/store in a single bundle, so AgentPanel and LsoaMap
 // share the same Zustand instance. We delay actually rendering LsoaMap until
 // client-side mount because maplibre touches window.
 import { LsoaMap } from "@/components/lsoa-map"
+import { IntroModal } from "@/components/intro-modal"
 
 export default function Page() {
   const [mounted, setMounted] = useState(false)
+  const [introOpen, setIntroOpen] = useState<boolean | undefined>(undefined)
   useEffect(() => setMounted(true), [])
 
   return (
@@ -30,12 +33,15 @@ export default function Page() {
             </span>
           </div>
           <div className="flex-1" />
-          <a
-            href="#"
-            className="text-[11px] font-mono text-ink-subtle hover:text-ink transition-colors"
+          <button
+            type="button"
+            onClick={() => setIntroOpen(true)}
+            aria-label="Show intro"
+            className="flex items-center gap-1 text-[11px] font-mono text-ink-subtle hover:text-ink transition-colors"
           >
-            About
-          </a>
+            <HelpCircle size={12} />
+            How this works
+          </button>
         </header>
 
         {/* Map fills remaining height */}
@@ -51,6 +57,9 @@ export default function Page() {
       >
         <AgentPanel />
       </section>
+
+      {/* First-load intro + reopen-via-help-button. */}
+      <IntroModal openOverride={introOpen} onClose={() => setIntroOpen(undefined)} />
     </main>
   )
 }

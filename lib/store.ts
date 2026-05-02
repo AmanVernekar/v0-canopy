@@ -104,6 +104,10 @@ interface CanopyStore {
   setStreamingText: (text: string) => void
   setSelectedAreaName: (name: string | null) => void
   setMapInstance: (m: MapLibreMap | null) => void
+  // Critic pass — when on, the API route runs a second adversarial review
+  // turn after the planner's first answer. Off by default (extra tokens).
+  criticEnabled: boolean
+  setCriticEnabled: (v: boolean) => void
   resetAgent: () => void
 }
 
@@ -127,6 +131,8 @@ export const useCanopyStore = create<CanopyStore>((set) => ({
   setStreamingText: (text) => set({ streamingText: text }),
   setSelectedAreaName: (name) => set({ selectedAreaName: name }),
   setMapInstance: (m) => set({ mapInstance: m }),
+  criticEnabled: false,
+  setCriticEnabled: (v) => set({ criticEnabled: v }),
   resetAgent: () =>
     set({
       isAgentRunning: false,

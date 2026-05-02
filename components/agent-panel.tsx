@@ -82,6 +82,8 @@ export function AgentPanel() {
   const streamingText = useCanopyStore((s) => s.streamingText)
   const selectedAreaName = useCanopyStore((s) => s.selectedAreaName)
   const setSelectedAreaName = useCanopyStore((s) => s.setSelectedAreaName)
+  const criticEnabled = useCanopyStore((s) => s.criticEnabled)
+  const setCriticEnabled = useCanopyStore((s) => s.setCriticEnabled)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevSelectedRef = useRef<string | null>(null)
@@ -90,7 +92,13 @@ export function AgentPanel() {
   const selectedFeature = selectedLsoa ? lsoaData[selectedLsoa] : null
 
   const { messages, sendMessage, status, error, setMessages, stop } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/agent" }),
+    transport: new DefaultChatTransport({
+      api: "/api/agent",
+      // Read the current value of the critic toggle at send-time, not at
+      // hook-init time, so flipping the toggle takes effect on the next run
+      // without re-mounting the chat.
+      body: () => ({ criticEnabled: useCanopyStore.getState().criticEnabled }),
+    }),
   })
 
   // Auto-run agent when a new LSOA is selected, and reset chat state.
@@ -266,6 +274,27 @@ export function AgentPanel() {
         <p className="text-[9px] font-mono text-ink-subtle uppercase tracking-widest flex-1">
           Agent reasoning
         </p>
+        {/* Critic-pass toggle. Adversarial self-review at the end — extra
+            tokens, off by default. Disabled while a run is in flight. */}
+        <button
+          type="button"
+          onClick={() => setCriticEnabled(!criticEnabled)}
+          disabled={isAgentRunning}
+          aria-pressed={criticEnabled}
+          title="When on, the agent runs an adversarial review pass after the dossier and may revise it."
+          className={`flex items-center gap-1 text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded border transition-colors disabled:opacity-50 ${
+            criticEnabled
+              ? "bg-evidence-soft border-evidence/50 text-evidence-deep"
+              : "bg-paper-deep border-line-strong text-ink-subtle hover:text-ink-muted"
+          }`}
+        >
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              criticEnabled ? "bg-evidence" : "bg-ink-faint"
+            }`}
+          />
+          <span>Critic</span>
+        </button>
         {isAgentRunning && (
           <>
             <motion.div
