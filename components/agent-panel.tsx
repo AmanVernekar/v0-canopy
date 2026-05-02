@@ -173,12 +173,11 @@ export function AgentPanel() {
                 <StatCard
                   icon={Thermometer}
                   label="Vulnerability"
-                  value={selectedFeature.vulnerability_score.toFixed(1)}
-                  unit="/ 10"
+                  value={selectedFeature.vulnerability_score.toFixed(2)}
                   color={
-                    selectedFeature.vulnerability_score >= 8
+                    selectedFeature.vulnerability_score >= 0.7
                       ? "text-red-400"
-                      : selectedFeature.vulnerability_score >= 6
+                      : selectedFeature.vulnerability_score >= 0.5
                       ? "text-amber-400"
                       : "text-green-400"
                   }
@@ -197,7 +196,7 @@ export function AgentPanel() {
                 <StatCard
                   icon={Users}
                   label="Pop. density"
-                  value={selectedFeature.population_density.toFixed(0)}
+                  value={selectedFeature.pop_density_per_ha.toFixed(0)}
                   unit="/ha"
                 />
               </div>

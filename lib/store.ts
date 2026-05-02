@@ -6,7 +6,7 @@ export interface LsoaFeature {
   vulnerability_score: number
   canopy_cover_pct: number
   imd_decile: number
-  population_density: number
+  pop_density_per_ha: number
 }
 
 export interface LsoaData {
