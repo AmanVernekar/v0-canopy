@@ -5,10 +5,10 @@ import { useCanopyStore, type LsoaData } from "@/lib/store"
 import { vulnerabilityColour, normaliseScore, SELECTED_STROKE } from "@/lib/colours"
 import { TreePine, House, Square, Umbrella, Trees, MapPin } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
-import type maplibregl from "maplibre-gl"
-
-// Lazy-load maplibre to avoid SSR issues
-let maplibre: typeof import("maplibre-gl") | null = null
+// page.tsx wraps this component in next/dynamic with ssr:false, so importing
+// maplibre at module scope is safe and avoids the dynamic-import-inside-useEffect
+// race that breaks under React Strict Mode's mount/cleanup/mount cycle.
+import maplibregl from "maplibre-gl"
 
 // Inline style with OSM tiles (no external style.json required)
 const DARK_STYLE: maplibregl.StyleSpecification = {
@@ -124,41 +124,34 @@ export function LsoaMap({ className }: LsoaMapProps) {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return
 
-    let mounted = true
-    
-    import("maplibre-gl").then((maplibreModule) => {
-      if (!mounted || !mapContainerRef.current) return
-      
-      // MapLibre exports Map directly (not as default.Map)
-      const maplibreGL = maplibreModule.default || maplibreModule
-      maplibre = maplibreGL as typeof import("maplibre-gl")
-      
-      const map = new maplibreGL.Map({
-        container: mapContainerRef.current,
-        style: DARK_STYLE,
-        center: [-0.09, 51.495],
-        zoom: 12,
-        attributionControl: false,
-      })
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: DARK_STYLE,
+      center: [-0.09, 51.495],
+      zoom: 12,
+      attributionControl: false,
+    })
 
-      map.addControl(new maplibreGL.NavigationControl({ showCompass: false }), "bottom-right")
+    mapRef.current = map
 
-      map.on("load", () => {
-        if (!mounted) return
-        mapRef.current = map
-        setMapLoaded(true)
-      })
-      
-      map.on("error", (e: unknown) => {
-        console.error("Map error:", e)
-      })
-    }).catch((err) => {
-      console.error("Failed to load MapLibre:", err)
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
+
+    // Gate on `isStyleLoaded()` rather than the `load` event — under React
+    // Strict Mode the first map gets .remove()'d immediately and the second
+    // map's `load` event sometimes never fires.
+    const markReady = () => setMapLoaded(true)
+    if (map.isStyleLoaded()) {
+      markReady()
+    } else {
+      map.once("styledata", markReady)
+    }
+
+    map.on("error", (e: unknown) => {
+      console.error("Map error:", e)
     })
 
     return () => {
-      mounted = false
-      mapRef.current?.remove()
+      map.remove()
       mapRef.current = null
     }
   }, [])
@@ -287,53 +280,49 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
     if (!parsedDossier) return
 
-    import("maplibre-gl").then((maplibreModule) => {
-      const maplibreGL = maplibreModule.default || maplibreModule
-      
-      parsedDossier.interventions.forEach((intervention) => {
-        const color = getInterventionColor(intervention.type)
+    parsedDossier.interventions.forEach((intervention) => {
+      const color = getInterventionColor(intervention.type)
 
-        intervention.target_locations.forEach((loc) => {
-          const el = document.createElement("div")
-          el.className = "intervention-marker"
-          el.style.cssText = `
-            width: 30px; height: 30px;
-            background: ${color}22;
-            border: 1.5px solid ${color};
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            cursor: pointer;
-            transition: transform 0.2s;
-          `
-          el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>`
+      intervention.target_locations.forEach((loc) => {
+        const el = document.createElement("div")
+        el.className = "intervention-marker"
+        el.style.cssText = `
+          width: 30px; height: 30px;
+          background: ${color}22;
+          border: 1.5px solid ${color};
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer;
+          transition: transform 0.2s;
+        `
+        el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>`
 
-          el.addEventListener("mouseenter", () => {
-            el.style.transform = "scale(1.2)"
-            const rect = el.getBoundingClientRect()
-            const containerRect = mapContainerRef.current?.getBoundingClientRect()
-            if (containerRect) {
-              setPopupInfo({
-                lng: loc.lng,
-                lat: loc.lat,
-                title: intervention.title,
-                rationale: intervention.rationale_short,
-                cost: intervention.estimated_cost_gbp,
-                x: rect.left - containerRect.left + rect.width / 2,
-                y: rect.top - containerRect.top,
-              })
-            }
-          })
-          el.addEventListener("mouseleave", () => {
-            el.style.transform = "scale(1)"
-            setPopupInfo(null)
-          })
-
-          const marker = new maplibreGL.Marker({ element: el })
-            .setLngLat([loc.lng, loc.lat])
-            .addTo(map)
-
-          markerRefs.current.push(marker)
+        el.addEventListener("mouseenter", () => {
+          el.style.transform = "scale(1.2)"
+          const rect = el.getBoundingClientRect()
+          const containerRect = mapContainerRef.current?.getBoundingClientRect()
+          if (containerRect) {
+            setPopupInfo({
+              lng: loc.lng,
+              lat: loc.lat,
+              title: intervention.title,
+              rationale: intervention.rationale_short,
+              cost: intervention.estimated_cost_gbp,
+              x: rect.left - containerRect.left + rect.width / 2,
+              y: rect.top - containerRect.top,
+            })
+          }
         })
+        el.addEventListener("mouseleave", () => {
+          el.style.transform = "scale(1)"
+          setPopupInfo(null)
+        })
+
+        const marker = new maplibregl.Marker({ element: el })
+          .setLngLat([loc.lng, loc.lat])
+          .addTo(map)
+
+        markerRefs.current.push(marker)
       })
     })
   }, [parsedDossier, mapLoaded])
@@ -360,8 +349,10 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
   return (
     <div className={`relative w-full h-full ${className ?? ""}`}>
-      {/* Map container */}
-      <div ref={mapContainerRef} className="absolute inset-0" />
+      {/* Map container — w-full h-full instead of absolute inset-0 because
+          maplibre-gl.css sets .maplibregl-map { position: relative } and clobbers
+          the absolute, collapsing height to 0. */}
+      <div ref={mapContainerRef} className="w-full h-full" />
 
       {/* Loading skeleton */}
       <AnimatePresence>

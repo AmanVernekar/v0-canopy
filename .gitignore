@@ -19,3 +19,7 @@ node_modules
 raw/
 .mypy_cache/
 .dmypy.json
+
+# Project-private spec — local source of truth, not for the deployed repo
+context.md
+.claude/
