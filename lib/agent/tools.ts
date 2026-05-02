@@ -351,10 +351,106 @@ export const scrape_funding_page = tool({
   },
 })
 
+// ────────────────────────────────────────────────────────────────────────
+// 7. web_search — broad discovery via Bright Data → DuckDuckGo HTML.
+// ────────────────────────────────────────────────────────────────────────
+// The curated funds-fallback list is small and the URLs it yields tend to
+// 404 / get blocked. This tool gives the agent a way to find *current* UK
+// funding pages, council schemes, news-of-grants articles, etc, then feed
+// the URLs it finds into `scrape_funding_page`.
+//
+// We hit DuckDuckGo's HTML endpoint via Bright Data Web Unlocker for
+// stability — DDG's HTML markup is far more parseable than Google's, and
+// the Web Unlocker handles bot detection. Returns up to `max_results`
+// entries with title, url, and snippet.
+// ────────────────────────────────────────────────────────────────────────
+function parseDdgResults(
+  html: string,
+  max: number
+): Array<{ title: string; url: string; snippet: string }> {
+  const results: Array<{ title: string; url: string; snippet: string }> = []
+  // Matches the <div class="result"> .. </div> block per result. DDG's HTML
+  // is stable enough for this: result__a anchors hold title+url, result__snippet
+  // holds the description.
+  const blockRe = /<div class="result[^"]*?"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/g
+  let m: RegExpExecArray | null
+  while ((m = blockRe.exec(html)) && results.length < max) {
+    const block = m[1]
+    const linkMatch = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/.exec(block)
+    if (!linkMatch) continue
+    let rawUrl = linkMatch[1]
+    // DDG wraps real URLs in /l/?uddg=<encoded>
+    const uddg = /[?&]uddg=([^&]+)/.exec(rawUrl)
+    if (uddg) rawUrl = decodeURIComponent(uddg[1])
+    if (!rawUrl.startsWith("http")) continue
+    const title = linkMatch[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+    const snippetMatch = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(block)
+    const snippet = snippetMatch
+      ? snippetMatch[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+      : ""
+    if (title && rawUrl) results.push({ title, url: rawUrl, snippet: snippet.slice(0, 240) })
+  }
+  return results
+}
+
+export const web_search = tool({
+  description:
+    "Search the open web for current UK funding announcements, council green-infrastructure schemes, or domain pages — anything not in the curated fallback list. Returns up to `max_results` URLs with titles and snippets. Use this BEFORE search_funding_schemes when you suspect the curated list is stale, when scrapes return empty, or when probing for less-obvious funds (lottery community grants, charitable trusts, water-company schemes, BID levies, ULEZ scrappage offshoots). Then feed the URLs to scrape_funding_page.",
+  inputSchema: z.object({
+    query: z.string().describe("Free-text search query"),
+    max_results: z.number().int().min(1).max(10).default(6),
+  }),
+  execute: async ({ query, max_results }) => {
+    const token = process.env.BRIGHT_DATA_TOKEN
+    if (!token) {
+      return {
+        error:
+          "BRIGHT_DATA_TOKEN not set. Cannot run web search — proceed with search_funding_schemes / get_fallback_funds.",
+      }
+    }
+    const zone = process.env.BRIGHT_DATA_ZONE ?? "web_unlocker1"
+    const ddgUrl = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+    try {
+      const r = await fetch("https://api.brightdata.com/request", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ zone, url: ddgUrl, format: "raw" }),
+      })
+      if (!r.ok) {
+        const errText = await r.text().catch(() => "")
+        return {
+          error: `Bright Data search returned ${r.status}: ${errText.slice(0, 200)}`,
+          query,
+        }
+      }
+      const html = await r.text()
+      const results = parseDdgResults(html, max_results)
+      return {
+        query,
+        engine: "duckduckgo (via Bright Data)",
+        results,
+        note:
+          results.length === 0
+            ? "No results parsed — the page format may have changed, or the search produced none. Try a different query."
+            : "Pass interesting URLs to scrape_funding_page to verify status / extract details.",
+      }
+    } catch (e) {
+      return {
+        error: `web_search request failed: ${e instanceof Error ? e.message : String(e)}`,
+        query,
+      }
+    }
+  },
+})
+
 export const tools = {
   get_lsoa_context,
   query_lsoa_subset,
   search_evidence,
+  web_search,
   search_funding_schemes,
   scrape_funding_page,
   get_fallback_funds,

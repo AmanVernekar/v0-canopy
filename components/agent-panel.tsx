@@ -14,6 +14,7 @@ import {
   Activity,
   Send,
   MessageSquare,
+  Square as SquareIcon,
 } from "lucide-react"
 import { useCanopyStore } from "@/lib/store"
 import type { ParsedDossier } from "@/lib/store"
@@ -88,7 +89,7 @@ export function AgentPanel() {
 
   const selectedFeature = selectedLsoa ? lsoaData[selectedLsoa] : null
 
-  const { messages, sendMessage, status, error, setMessages } = useChat({
+  const { messages, sendMessage, status, error, setMessages, stop } = useChat({
     transport: new DefaultChatTransport({ api: "/api/agent" }),
   })
 
@@ -257,14 +258,24 @@ export function AgentPanel() {
           Agent reasoning
         </p>
         {isAgentRunning && (
-          <motion.div
-            animate={{ opacity: [1, 0.4] }}
-            transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
-            className="flex items-center gap-1 text-[9px] font-mono text-cyan-400"
-          >
-            <Activity size={9} />
-            <span>Running</span>
-          </motion.div>
+          <>
+            <motion.div
+              animate={{ opacity: [1, 0.4] }}
+              transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
+              className="flex items-center gap-1 text-[9px] font-mono text-cyan-400"
+            >
+              <Activity size={9} />
+              <span>Running</span>
+            </motion.div>
+            <button
+              onClick={() => stop()}
+              className="flex items-center gap-1 text-[9px] font-mono text-red-400 hover:text-red-300 bg-red-400/10 hover:bg-red-400/20 border border-red-400/30 rounded px-1.5 py-0.5 transition-colors uppercase tracking-widest"
+              aria-label="Stop analysis"
+            >
+              <SquareIcon size={8} fill="currentColor" />
+              <span>Stop</span>
+            </button>
+          </>
         )}
       </div>
 

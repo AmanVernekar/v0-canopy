@@ -16,10 +16,15 @@ Use \`query_lsoa_subset\` one or more times to test those hypotheses (e.g. how m
 List 3–6 candidate interventions in plain prose. For each, name it specifically (not "street trees" but "8 semi-mature plane trees on the residential terrace section of Bushwood Road"). Mark which sub-area each one targets. Briefly note any candidates you considered and *dropped* and why.
 
 ## Step 4 · Evidence check
-For each surviving intervention, call \`search_evidence\` once. Quote effect sizes precisely. Discount non-UK / non-temperate-maritime studies. Mark each intervention's evidence as "strong", "moderate", or "weak" and say why.
+For each surviving intervention, call \`search_evidence\` once. Prefer UK / temperate-maritime studies, but DO NOT discard otherwise-good evidence just because it's continental European, North American, or modelled — note the climate caveat and discount appropriately rather than rejecting outright. If the first query returns nothing useful, retry once with a broader phrasing (drop the climate qualifier, swap the term — "street trees" → "urban trees" or "urban canopy"). Quote effect sizes precisely. Mark each intervention as "strong", "moderate", or "weak" and say why.
 
 ## Step 5 · Funding match
-Call \`search_funding_schemes\` with your intervention types. Then for EACH candidate URL it returns, call \`scrape_funding_page\` (Bright Data Web Unlocker) to verify the scheme is currently open and capture the deadline / max grant / match requirement. If \`scrape_funding_page\` returns an error (no token / blocked), fall back to \`get_fallback_funds\` and disclose this.
+You have two complementary funding tools — use them together.
+
+1. Start broad: call \`web_search\` with 1–3 queries that combine your intervention themes with current-year UK funding language (e.g. "UK urban tree planting grants 2026", "Greater London community climate fund 2026", "BID levy green infrastructure London"). Look across council, lottery (National Lottery Community Fund / Heritage Fund), water-company catchment schemes, charitable trusts (Trees for Cities, Woodland Trust), and active-travel adjacencies (Active Travel England). Don't restrict yourself to obvious central-government funds.
+2. Also call \`search_funding_schemes\` with your intervention types — that gives you the curated UK-government baseline.
+3. Merge both URL lists, dedupe, and call \`scrape_funding_page\` on the most promising ones (cap at ~6 scrapes total) to verify status, deadline, max grant, and match requirement.
+4. If too many scrapes return empty / blocked / 404, fall back to \`get_fallback_funds\` for the affected intervention types AND keep any funds you successfully discovered via \`web_search\`. Disclose which were live-verified vs fallback in the dossier.
 
 After scraping, name each fund and what you learned. Surface any *repackaging opportunity* — an awkward-but-larger fund (e.g. Active Travel England) that could be unlocked by reframing your interventions (e.g. add pedestrian widening alongside shade structures). This repackaging insight is one of the highest-value things you produce.
 

@@ -374,12 +374,58 @@ export function ReasoningTrace({
     })
   })
 
+  // Show a "Thinking…" indicator whenever the agent is mid-flight but the last
+  // visible content isn't actively streaming text (i.e. between tool calls,
+  // before the first token, or after a tool result while the model decides
+  // what to do next). Patterned after Claude Code's idle indicator so users
+  // don't think the UI has hung.
+  const lastMsg = messages[messages.length - 1]
+  const lastPart = lastMsg?.parts?.[lastMsg.parts.length - 1]
+  const lastPartType = (lastPart as { type?: string } | undefined)?.type
+  const lastIsActiveText =
+    lastMsg?.role === "assistant" && lastPartType === "text"
+  const showThinking = isStreaming && !lastIsActiveText
+
   return (
     <div className="space-y-2 text-[12px]">
       {elements}
       {messages.length === 0 && streamingText && (
         <TextBlock text={streamingText} isLast isStreaming={isStreaming} />
       )}
+      {showThinking && <ThinkingIndicator />}
     </div>
+  )
+}
+
+function ThinkingIndicator() {
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="flex items-center gap-2 py-1.5 pl-1"
+    >
+      <motion.span
+        animate={{ opacity: [0.3, 1, 0.3] }}
+        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+        className="text-[12px] font-mono text-cyan-400/80 italic"
+      >
+        Thinking
+      </motion.span>
+      <div className="flex gap-0.5">
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            animate={{ opacity: [0.2, 1, 0.2] }}
+            transition={{
+              duration: 1.4,
+              repeat: Infinity,
+              ease: "easeInOut",
+              delay: i * 0.18,
+            }}
+            className="w-1 h-1 rounded-full bg-cyan-400"
+          />
+        ))}
+      </div>
+    </motion.div>
   )
 }

@@ -14,6 +14,8 @@ import {
 import { motion } from "framer-motion"
 import jsPDF from "jspdf"
 import type { ParsedDossier, Fund, Intervention } from "@/lib/store"
+import { useCanopyStore } from "@/lib/store"
+import type { Map as MapLibreMap } from "maplibre-gl"
 
 interface DossierViewProps {
   dossier: ParsedDossier
@@ -64,10 +66,49 @@ function fundStatusBadge(status: Fund["status"]) {
   return "bg-zinc-700 text-zinc-400 border-zinc-600"
 }
 
+function getInterventionColorForPdf(type: string): [number, number, number] {
+  const t = type.toLowerCase()
+  if (t.includes("tree")) return [74, 222, 128] // green
+  if (t.includes("cool_roof") || t.includes("cool roof")) return [96, 165, 250] // blue
+  if (t.includes("green_roof") || t.includes("green roof")) return [52, 211, 153]
+  if (t.includes("pavement") || t.includes("paving")) return [167, 139, 250]
+  if (t.includes("shade")) return [245, 158, 11]
+  if (t.includes("park") || t.includes("garden")) return [16, 185, 129]
+  return [34, 211, 238]
+}
+
+function captureMapForPdf(
+  map: MapLibreMap,
+  dossier: ParsedDossier
+): { dataUrl: string; cssWidth: number; cssHeight: number; markers: Array<{ x: number; y: number; color: [number, number, number] }> } | null {
+  try {
+    const canvas = map.getCanvas()
+    const dataUrl = canvas.toDataURL("image/png")
+    if (!dataUrl || dataUrl === "data:,") return null
+    const container = map.getContainer()
+    const cssWidth = container.clientWidth
+    const cssHeight = container.clientHeight
+    const markers: Array<{ x: number; y: number; color: [number, number, number] }> = []
+    for (const iv of dossier.interventions) {
+      const color = getInterventionColorForPdf(iv.type)
+      for (const loc of iv.target_locations) {
+        if (typeof loc.lng !== "number" || typeof loc.lat !== "number") continue
+        const p = map.project([loc.lng, loc.lat])
+        if (p.x < 0 || p.y < 0 || p.x > cssWidth || p.y > cssHeight) continue
+        markers.push({ x: p.x, y: p.y, color })
+      }
+    }
+    return { dataUrl, cssWidth, cssHeight, markers }
+  } catch {
+    return null
+  }
+}
+
 function generatePdf(
   dossier: ParsedDossier,
   rawMarkdown: string,
-  areaName: string | null
+  areaName: string | null,
+  mapInstance: MapLibreMap | null
 ) {
   const doc = new jsPDF({ unit: "pt", format: "a4" })
   const W = doc.internal.pageSize.getWidth()
@@ -117,6 +158,39 @@ function generatePdf(
     { size: 11, bold: true, gap: 6 }
   )
   y += 8
+
+  // ── Map snapshot with intervention markers ──
+  if (mapInstance) {
+    const snapshot = captureMapForPdf(mapInstance, dossier)
+    if (snapshot) {
+      const imgW = W - margin * 2
+      const imgH = (snapshot.cssHeight / snapshot.cssWidth) * imgW
+      // Cap height so we don't push everything off the first page.
+      const cappedH = Math.min(imgH, 280)
+      const cappedW = (cappedH / imgH) * imgW
+      const offsetX = margin + (imgW - cappedW) / 2
+      writeLine("INTERVENTION MAP", {
+        size: 9,
+        bold: true,
+        color: [120, 120, 120],
+        gap: 6,
+      })
+      doc.addImage(snapshot.dataUrl, "PNG", offsetX, y, cappedW, cappedH)
+      // Overlay markers as filled circles. Positions are in CSS pixels of the
+      // live map; scale by the same ratio used to fit the image.
+      const sx = cappedW / snapshot.cssWidth
+      const sy = cappedH / snapshot.cssHeight
+      for (const m of snapshot.markers) {
+        doc.setFillColor(m.color[0], m.color[1], m.color[2])
+        doc.setDrawColor(255, 255, 255)
+        doc.setLineWidth(0.8)
+        const cx = offsetX + m.x * sx
+        const cy = y + m.y * sy
+        doc.circle(cx, cy, 3.5, "FD")
+      }
+      y += cappedH + 12
+    }
+  }
 
   // ── Interventions table ──
   writeLine("INTERVENTIONS", { size: 9, bold: true, color: [120, 120, 120], gap: 6 })
@@ -215,7 +289,10 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
   }, [dossier, rawMarkdown, areaName])
 
   const handleDownloadPdf = useCallback(() => {
-    generatePdf(dossier, rawMarkdown, areaName)
+    // Read the map ref non-reactively at click time so the dossier view
+    // doesn't re-render on every map move.
+    const mapInstance = useCanopyStore.getState().mapInstance
+    generatePdf(dossier, rawMarkdown, areaName, mapInstance)
   }, [dossier, rawMarkdown, areaName])
 
   // Headline card values

@@ -41,8 +41,6 @@ interface SelectedMarker {
   lng: number
   lat: number
   index: number
-  x: number
-  y: number
 }
 
 // Match the icon to the kind of intervention. Loose matching on substrings of
@@ -98,10 +96,24 @@ export function LsoaMap({ className }: LsoaMapProps) {
   const [mapLoaded, setMapLoaded] = useState(false)
   const [hoveredLsoa, setHoveredLsoa] = useState<string | null>(null)
   const [selectedMarker, setSelectedMarker] = useState<SelectedMarker | null>(null)
+  // Re-projected popup screen coords. Updated whenever the map moves so the
+  // popup tracks its anchor instead of getting stranded on pan/zoom.
+  const [popupXY, setPopupXY] = useState<{ x: number; y: number } | null>(null)
+  // LSOA the user just clicked but hasn't confirmed switching to (when there's
+  // already work to lose).
+  const [pendingLsoa, setPendingLsoa] = useState<string | null>(null)
   const markerRefs = useRef<maplibregl.Marker[]>([])
 
-  const { selectedLsoa, lsoaData, setLsoaData, setSelectedLsoa, parsedDossier, resetAgent } =
-    useCanopyStore()
+  const {
+    selectedLsoa,
+    lsoaData,
+    setLsoaData,
+    setSelectedLsoa,
+    parsedDossier,
+    resetAgent,
+    setMapInstance,
+    isAgentRunning,
+  } = useCanopyStore()
 
   // Load LSOA data from public JSON
   useEffect(() => {
@@ -148,9 +160,13 @@ export function LsoaMap({ className }: LsoaMapProps) {
       center: [-0.09, 51.495],
       zoom: 12,
       attributionControl: false,
+      // Required for getCanvas().toDataURL() — used by the dossier PDF export
+      // to embed a snapshot of the map. Slight perf cost is acceptable here.
+      preserveDrawingBuffer: true,
     })
 
     mapRef.current = map
+    setMapInstance(map)
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
 
@@ -168,8 +184,9 @@ export function LsoaMap({ className }: LsoaMapProps) {
     return () => {
       map.remove()
       mapRef.current = null
+      setMapInstance(null)
     }
-  }, [])
+  }, [setMapInstance])
 
   // Add/update polygon layers when data and map are ready
   useEffect(() => {
@@ -248,16 +265,24 @@ export function LsoaMap({ className }: LsoaMapProps) {
         setHoveredLsoa(null)
       })
 
-      // Click
+      // Click — read latest store state at click time so we can gate behind
+      // the confirm modal when work would be lost.
       map.on("click", "lsoas-fill", (e) => {
         const code = e.features?.[0]?.properties?.lsoa_code as string | undefined
-        if (code) {
-          if (code !== selectedLsoa) {
-            resetAgent()
-          }
-          setSelectedLsoa(code)
+        if (!code) return
+        const s = useCanopyStore.getState()
+        // Same area or no prior work: just go.
+        if (
+          code === s.selectedLsoa ||
+          (!s.parsedDossier && !s.isAgentRunning)
+        ) {
+          if (code !== s.selectedLsoa) s.resetAgent()
+          s.setSelectedLsoa(code)
           setSelectedMarker(null)
+          return
         }
+        // Otherwise: queue the switch for user confirmation.
+        setPendingLsoa(code)
       })
     } else {
       ;(map.getSource("lsoas") as maplibregl.GeoJSONSource).setData(geojson)
@@ -308,42 +333,43 @@ export function LsoaMap({ className }: LsoaMapProps) {
         if (typeof loc.lng !== "number" || typeof loc.lat !== "number") return
         allCoords.push([loc.lng, loc.lat])
 
+        // Outer element — MapLibre owns its `transform` for translation. Do
+        // NOT set transform on this node, or hover-scaling will clobber the
+        // marker's lng/lat positioning and it'll fly to the top-left.
         const el = document.createElement("div")
         el.className = "intervention-marker"
-        el.style.cssText = `
+        el.style.cursor = "pointer"
+
+        // Inner element carries all the styling and hover effects.
+        const inner = document.createElement("div")
+        inner.style.cssText = `
           width: 32px; height: 32px;
           background: ${color}33;
           border: 2px solid ${color};
           border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
-          cursor: pointer;
           transition: transform 0.15s, box-shadow 0.15s;
           box-shadow: 0 0 0 0 ${color}66;
         `
-        el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>`
+        inner.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>`
+        el.appendChild(inner)
 
         el.addEventListener("mouseenter", () => {
-          el.style.transform = "scale(1.15)"
-          el.style.boxShadow = `0 0 0 6px ${color}22`
+          inner.style.transform = "scale(1.15)"
+          inner.style.boxShadow = `0 0 0 6px ${color}22`
         })
         el.addEventListener("mouseleave", () => {
-          el.style.transform = "scale(1)"
-          el.style.boxShadow = `0 0 0 0 ${color}66`
+          inner.style.transform = "scale(1)"
+          inner.style.boxShadow = `0 0 0 0 ${color}66`
         })
         el.addEventListener("click", (ev) => {
           ev.stopPropagation()
-          const rect = el.getBoundingClientRect()
-          const containerRect = mapContainerRef.current?.getBoundingClientRect()
-          if (containerRect) {
-            setSelectedMarker({
-              intervention,
-              lng: loc.lng,
-              lat: loc.lat,
-              index: ivIdx * 100 + locIdx,
-              x: rect.left - containerRect.left + rect.width / 2,
-              y: rect.top - containerRect.top,
-            })
-          }
+          setSelectedMarker({
+            intervention,
+            lng: loc.lng,
+            lat: loc.lat,
+            index: ivIdx * 100 + locIdx,
+          })
         })
 
         const marker = new maplibregl.Marker({ element: el })
@@ -367,6 +393,29 @@ export function LsoaMap({ className }: LsoaMapProps) {
       )
     }
   }, [parsedDossier, mapLoaded])
+
+  // Keep popup glued to its lat/lng across pan/zoom by re-projecting on every
+  // map move. Without this, the popup is positioned once at click time and
+  // drifts off as the map animates (e.g. the auto-fit after the dossier
+  // arrives).
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !selectedMarker) {
+      setPopupXY(null)
+      return
+    }
+    const update = () => {
+      const p = map.project([selectedMarker.lng, selectedMarker.lat])
+      setPopupXY({ x: p.x, y: p.y })
+    }
+    update()
+    map.on("move", update)
+    map.on("zoom", update)
+    return () => {
+      map.off("move", update)
+      map.off("zoom", update)
+    }
+  }, [selectedMarker])
 
   // Compute fund cover for the open marker, if any.
   const matchedFunds =
@@ -516,16 +565,16 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
       {/* Persistent intervention popup (click marker) */}
       <AnimatePresence>
-        {selectedMarker && (
+        {selectedMarker && popupXY && (
           <motion.div
             key={`popup-${selectedMarker.index}`}
             initial={{ opacity: 0, scale: 0.95, y: 4 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="absolute z-20"
+            className="absolute z-20 pointer-events-auto"
             style={{
-              left: selectedMarker.x,
-              top: selectedMarker.y - 12,
+              left: popupXY.x,
+              top: popupXY.y - 22,
               transform: "translate(-50%, -100%)",
             }}
           >
@@ -616,6 +665,64 @@ export function LsoaMap({ className }: LsoaMapProps) {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirm switch — guards against losing in-progress work. */}
+      <AnimatePresence>
+        {pendingLsoa && (
+          <motion.div
+            key="confirm-switch"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-30 bg-zinc-950/70 backdrop-blur-sm flex items-center justify-center p-6"
+            onClick={() => setPendingLsoa(null)}
+          >
+            <motion.div
+              initial={{ y: 8, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 4, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-zinc-900 border border-zinc-700/80 rounded-md p-5 w-[380px] max-w-full shadow-2xl"
+            >
+              <p className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest mb-2">
+                Move to a different area?
+              </p>
+              <p className="text-[13px] text-zinc-200 leading-relaxed mb-1">
+                Switch analysis to{" "}
+                <span className="font-medium text-cyan-400">
+                  {lsoaData[pendingLsoa]?.name ?? pendingLsoa}
+                </span>
+                ?
+              </p>
+              <p className="text-[11px] text-zinc-500 leading-relaxed mb-4">
+                {isAgentRunning
+                  ? "The current analysis is still running and will be discarded."
+                  : "The current dossier will be discarded. You can always re-run."}
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setPendingLsoa(null)}
+                  className="text-[11px] font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-md px-3 py-1.5 transition-colors"
+                >
+                  Stay here
+                </button>
+                <button
+                  onClick={() => {
+                    const code = pendingLsoa
+                    setPendingLsoa(null)
+                    resetAgent()
+                    setSelectedLsoa(code)
+                    setSelectedMarker(null)
+                  }}
+                  className="text-[11px] font-mono text-cyan-400 bg-cyan-400/15 hover:bg-cyan-400/25 border border-cyan-400/40 rounded-md px-3 py-1.5 transition-colors"
+                >
+                  Move to area
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

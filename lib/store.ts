@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import type { Map as MapLibreMap } from "maplibre-gl"
 
 export interface LsoaFeature {
   name: string
@@ -65,6 +66,9 @@ interface CanopyStore {
   streamingText: string
   // Friendly neighbourhood name (e.g. "Walworth") looked up after selection.
   selectedAreaName: string | null
+  // Non-reactive ref to the live MapLibre instance, set by lsoa-map.tsx on
+  // mount. Used by the dossier PDF exporter to grab the rendered canvas.
+  mapInstance: MapLibreMap | null
   setSelectedLsoa: (code: string | null) => void
   setLsoaData: (data: LsoaData) => void
   setIsAgentRunning: (running: boolean) => void
@@ -73,6 +77,7 @@ interface CanopyStore {
   setParsedDossier: (dossier: ParsedDossier | null) => void
   setStreamingText: (text: string) => void
   setSelectedAreaName: (name: string | null) => void
+  setMapInstance: (m: MapLibreMap | null) => void
   resetAgent: () => void
 }
 
@@ -84,6 +89,7 @@ export const useCanopyStore = create<CanopyStore>((set) => ({
   parsedDossier: null,
   streamingText: "",
   selectedAreaName: null,
+  mapInstance: null,
 
   setSelectedLsoa: (code) => set({ selectedLsoa: code }),
   setLsoaData: (data) => set({ lsoaData: data }),
@@ -94,6 +100,7 @@ export const useCanopyStore = create<CanopyStore>((set) => ({
   setParsedDossier: (dossier) => set({ parsedDossier: dossier }),
   setStreamingText: (text) => set({ streamingText: text }),
   setSelectedAreaName: (name) => set({ selectedAreaName: name }),
+  setMapInstance: (m) => set({ mapInstance: m }),
   resetAgent: () =>
     set({
       isAgentRunning: false,
