@@ -22,6 +22,8 @@ import { ReasoningTrace } from "@/components/reasoning-trace"
 import { DossierView } from "@/components/dossier-view"
 import { InfoTooltip, TERM_DEFINITIONS } from "@/components/info-tooltip"
 import { resolveAreaName } from "@/lib/area-name"
+import { getSessionId } from "@/lib/session"
+import type { UIMessage } from "ai"
 
 function StatCard({
   icon: Icon,
@@ -101,17 +103,51 @@ export function AgentPanel() {
     }),
   })
 
-  // Auto-run agent when a new LSOA is selected, and reset chat state.
+  // Auto-run agent when a new LSOA is selected. If a saved analysis exists
+  // for this (session, lsoa) in Supabase, hydrate it instead of re-running.
   useEffect(() => {
     if (!selectedLsoa || selectedLsoa === prevSelectedRef.current) return
     if (status === "streaming" || status === "submitted") return
     prevSelectedRef.current = selectedLsoa
-    setIsAgentRunning(true)
     setParsedDossier(null)
     setStreamingText("")
     setSelectedAreaName(null)
     setMessages([])
-    sendMessage({ text: selectedLsoa })
+
+    let cancelled = false
+    const sid = getSessionId()
+    ;(async () => {
+      // Try restoring a previous analysis. Silent failure means we just run
+      // the agent fresh.
+      try {
+        if (sid) {
+          const r = await fetch(
+            `/api/analyses?session=${encodeURIComponent(sid)}&lsoa=${encodeURIComponent(selectedLsoa)}`
+          )
+          if (r.status === 200) {
+            const row = await r.json()
+            if (cancelled) return
+            const restoredMessages = (row?.messages ?? []) as UIMessage[]
+            const restoredDossier = (row?.parsed_dossier ?? null) as ParsedDossier | null
+            if (Array.isArray(restoredMessages) && restoredMessages.length > 0) {
+              setMessages(restoredMessages)
+              if (restoredDossier) setParsedDossier(restoredDossier)
+              if (row?.area_name) setSelectedAreaName(row.area_name)
+              return
+            }
+          }
+        }
+      } catch {
+        // proceed to fresh run
+      }
+      if (cancelled) return
+      setIsAgentRunning(true)
+      sendMessage({ text: selectedLsoa })
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [
     selectedLsoa,
     status,
@@ -160,6 +196,29 @@ export function AgentPanel() {
     const parsed = extractDossier(fullText)
     if (parsed) setParsedDossier(parsed)
   }, [status, fullText, setParsedDossier])
+
+  // Persist completed turns to Supabase so the dossier survives a refresh
+  // and re-clicking the LSOA hydrates instantly. Best-effort — silent failure.
+  useEffect(() => {
+    if (status !== "ready" || !selectedLsoa || messages.length === 0) return
+    const sid = getSessionId()
+    if (!sid) return
+    const parsed = extractDossier(fullText)
+    fetch("/api/analyses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sid,
+        lsoa_code: selectedLsoa,
+        area_name: selectedAreaName,
+        messages,
+        parsed_dossier: parsed,
+        critic_enabled: criticEnabled,
+      }),
+    }).catch(() => {
+      /* silent */
+    })
+  }, [status, selectedLsoa, messages, fullText, selectedAreaName, criticEnabled])
 
   // Auto-scroll reasoning trace
   useEffect(() => {
