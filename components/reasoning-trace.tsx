@@ -80,17 +80,17 @@ function ToolCallCard({ part }: { part: { type: "tool-invocation"; toolInvocatio
             className="overflow-hidden"
           >
             <div className="px-3 pb-3 pt-1 space-y-2 border-t border-zinc-800/60">
-              {args && (
+              {args != null && (
                 <div>
                   <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-1">
                     Input
                   </p>
                   <pre className="text-[10px] font-mono text-zinc-400 bg-zinc-950/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">
-                    {typeof args === "string" ? args : JSON.stringify(args, null, 2)}
+                    {typeof args === "string" ? args : JSON.stringify(args as Record<string, unknown>, null, 2)}
                   </pre>
                 </div>
               )}
-              {result && (
+              {result != null && (
                 <div>
                   <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-1">
                     Result
@@ -115,7 +115,7 @@ function StreamingCursor() {
   return (
     <motion.span
       animate={{ opacity: [1, 0] }}
-      transition={{ duration: 0.7, repeat: Infinity, ease: "steps(1)" }}
+      transition={{ duration: 0.7, repeat: Infinity }}
       className="inline-block w-[2px] h-[14px] bg-cyan-400 ml-0.5 align-middle"
     />
   )
@@ -128,7 +128,7 @@ function TextBlock({ text, isLast, isStreaming }: { text: string; isLast: boolea
   if (!visibleText.trim()) return null
 
   return (
-    <div className="text-[12px] leading-relaxed text-zinc-300 font-sans whitespace-pre-wrap">
+    <div className="text-[12px] leading-relaxed text-zinc-300 font-sans whitespace-pre-wrap" suppressHydrationWarning>
       {visibleText}
       {isLast && isStreaming && <StreamingCursor />}
     </div>
@@ -167,10 +167,12 @@ export function ReasoningTrace({ messages, isStreaming, streamingText }: Reasoni
             />
           )
         } else if (part.type === "tool-invocation") {
+          // Safe type assertion with proper typing
+          const toolPart = part as any
           elements.push(
             <ToolCallCard
               key={key}
-              part={part as { type: "tool-invocation"; toolInvocation: { toolName: string; toolCallId: string; state: string; args?: unknown; result?: unknown } }}
+              part={toolPart}
             />
           )
         }
