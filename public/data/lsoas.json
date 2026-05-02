@@ -1,0 +1,97 @@
+{
+  "E01003649": {
+    "name": "Southwark 016A",
+    "vulnerability_score": 8.7,
+    "canopy_cover_pct": 4.2,
+    "imd_decile": 2,
+    "population_density": 142.3,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-0.0900, 51.4950],
+          [-0.0820, 51.4950],
+          [-0.0820, 51.4890],
+          [-0.0900, 51.4890],
+          [-0.0900, 51.4950]
+        ]
+      ]
+    }
+  },
+  "E01003651": {
+    "name": "Southwark 018C",
+    "vulnerability_score": 6.1,
+    "canopy_cover_pct": 9.8,
+    "imd_decile": 4,
+    "population_density": 98.7,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-0.0820, 51.4950],
+          [-0.0740, 51.4950],
+          [-0.0740, 51.4890],
+          [-0.0820, 51.4890],
+          [-0.0820, 51.4950]
+        ]
+      ]
+    }
+  },
+  "E01004321": {
+    "name": "Lambeth 022B",
+    "vulnerability_score": 9.3,
+    "canopy_cover_pct": 2.1,
+    "imd_decile": 1,
+    "population_density": 185.4,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-0.1080, 51.4870],
+          [-0.0980, 51.4870],
+          [-0.0980, 51.4800],
+          [-0.1080, 51.4800],
+          [-0.1080, 51.4870]
+        ]
+      ]
+    }
+  },
+  "E01002817": {
+    "name": "Tower Hamlets 031A",
+    "vulnerability_score": 7.4,
+    "canopy_cover_pct": 6.5,
+    "imd_decile": 3,
+    "population_density": 120.1,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-0.0600, 51.5100],
+          [-0.0500, 51.5100],
+          [-0.0500, 51.5030],
+          [-0.0600, 51.5030],
+          [-0.0600, 51.5100]
+        ]
+      ]
+    }
+  },
+  "E01001234": {
+    "name": "Newham 007D",
+    "vulnerability_score": 5.2,
+    "canopy_cover_pct": 14.3,
+    "imd_decile": 5,
+    "population_density": 76.9,
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-0.0450, 51.5080],
+          [-0.0350, 51.5080],
+          [-0.0350, 51.5010],
+          [-0.0450, 51.5010],
+          [-0.0450, 51.5080]
+        ]
+      ]
+    }
+  }
+}
