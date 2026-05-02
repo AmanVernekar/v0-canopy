@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useRef, useCallback, useState } from "react"
 import { useChat } from "@ai-sdk/react"
 import { DefaultChatTransport } from "ai"
 import { motion, AnimatePresence } from "framer-motion"
@@ -12,11 +12,15 @@ import {
   RefreshCw,
   AlertCircle,
   Activity,
+  Send,
+  MessageSquare,
 } from "lucide-react"
 import { useCanopyStore } from "@/lib/store"
 import type { ParsedDossier } from "@/lib/store"
 import { ReasoningTrace } from "@/components/reasoning-trace"
 import { DossierView } from "@/components/dossier-view"
+import { InfoTooltip, TERM_DEFINITIONS } from "@/components/info-tooltip"
+import { resolveAreaName } from "@/lib/area-name"
 
 function StatCard({
   icon: Icon,
@@ -24,12 +28,14 @@ function StatCard({
   value,
   unit,
   color = "text-zinc-300",
+  tooltip,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>
   label: string
   value: number | string
   unit?: string
   color?: string
+  tooltip?: { title: string; body: React.ReactNode }
 }) {
   return (
     <div className="bg-zinc-900/60 border border-zinc-800/60 rounded-md p-3">
@@ -38,6 +44,7 @@ function StatCard({
         <span className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest">
           {label}
         </span>
+        {tooltip && <InfoTooltip title={tooltip.title} body={tooltip.body} />}
       </div>
       <p className={`text-base font-mono font-medium ${color}`}>
         {value}
@@ -49,24 +56,21 @@ function StatCard({
 
 function extractDossier(text: string): ParsedDossier | null {
   try {
-    const match = text.match(/```json\s*([\s\S]*?)```/)
-    if (!match) return null
-    return JSON.parse(match[1]) as ParsedDossier
+    // Find the LAST fenced JSON block (so follow-up turns can update the dossier).
+    const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/g)]
+    if (matches.length === 0) return null
+    const last = matches[matches.length - 1][1]
+    return JSON.parse(last) as ParsedDossier
   } catch {
     return null
   }
 }
 
 function extractMarkdown(text: string): string {
-  // Return text before the JSON fenced block
-  const idx = text.indexOf("```json")
-  return idx > 0 ? text.slice(0, idx).trim() : text
+  return text.replace(/```json[\s\S]*?```/g, "").trim()
 }
 
 export function AgentPanel() {
-  // Granular selectors so we can verify each piece of state independently.
-  // (Investigating why selectedFeature reads as null even when the agent is
-  // running — see lib/store.ts singleton notes.)
   const selectedLsoa = useCanopyStore((s) => s.selectedLsoa)
   const lsoaData = useCanopyStore((s) => s.lsoaData)
   const isAgentRunning = useCanopyStore((s) => s.isAgentRunning)
@@ -75,26 +79,20 @@ export function AgentPanel() {
   const setParsedDossier = useCanopyStore((s) => s.setParsedDossier)
   const setStreamingText = useCanopyStore((s) => s.setStreamingText)
   const streamingText = useCanopyStore((s) => s.streamingText)
-
-  if (typeof window !== "undefined") {
-    // eslint-disable-next-line no-console
-    console.log("[AgentPanel render]", {
-      selectedLsoa,
-      lsoaCount: Object.keys(lsoaData).length,
-      hit: selectedLsoa ? !!lsoaData[selectedLsoa] : null,
-    })
-  }
+  const selectedAreaName = useCanopyStore((s) => s.selectedAreaName)
+  const setSelectedAreaName = useCanopyStore((s) => s.setSelectedAreaName)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevSelectedRef = useRef<string | null>(null)
+  const [followupText, setFollowupText] = useState("")
 
   const selectedFeature = selectedLsoa ? lsoaData[selectedLsoa] : null
 
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({ api: "/api/agent" }),
   })
 
-  // Auto-run agent when a new LSOA is selected
+  // Auto-run agent when a new LSOA is selected, and reset chat state.
   useEffect(() => {
     if (!selectedLsoa || selectedLsoa === prevSelectedRef.current) return
     if (status === "streaming" || status === "submitted") return
@@ -102,8 +100,31 @@ export function AgentPanel() {
     setIsAgentRunning(true)
     setParsedDossier(null)
     setStreamingText("")
+    setSelectedAreaName(null)
+    setMessages([])
     sendMessage({ text: selectedLsoa })
-  }, [selectedLsoa, status, sendMessage, setIsAgentRunning, setParsedDossier, setStreamingText])
+  }, [
+    selectedLsoa,
+    status,
+    sendMessage,
+    setIsAgentRunning,
+    setParsedDossier,
+    setStreamingText,
+    setSelectedAreaName,
+    setMessages,
+  ])
+
+  // Resolve a friendly area name when an LSOA is selected.
+  useEffect(() => {
+    if (!selectedLsoa || !selectedFeature) return
+    let cancelled = false
+    resolveAreaName(selectedLsoa, selectedFeature.geometry).then((name) => {
+      if (!cancelled) setSelectedAreaName(name)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedLsoa, selectedFeature, setSelectedAreaName])
 
   // Track running state
   useEffect(() => {
@@ -116,20 +137,20 @@ export function AgentPanel() {
     .flatMap((m) => m.parts ?? [])
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
-    .join("")
+    .join("\n\n")
 
   // Track streaming text
   useEffect(() => {
     setStreamingText(fullText)
   }, [fullText, setStreamingText])
 
-  // Parse dossier once streaming is done
+  // Parse / re-parse dossier whenever a turn completes (so follow-ups can
+  // emit an updated JSON block and refresh the map).
   useEffect(() => {
-    if (status === "ready" && fullText && !parsedDossier) {
-      const parsed = extractDossier(fullText)
-      if (parsed) setParsedDossier(parsed)
-    }
-  }, [status, fullText, parsedDossier, setParsedDossier])
+    if (status !== "ready" || !fullText) return
+    const parsed = extractDossier(fullText)
+    if (parsed) setParsedDossier(parsed)
+  }, [status, fullText, setParsedDossier])
 
   // Auto-scroll reasoning trace
   useEffect(() => {
@@ -142,17 +163,26 @@ export function AgentPanel() {
     if (!selectedLsoa) return
     setParsedDossier(null)
     setStreamingText("")
+    setMessages([])
     prevSelectedRef.current = null
-  }, [selectedLsoa, setParsedDossier, setStreamingText])
+  }, [selectedLsoa, setParsedDossier, setStreamingText, setMessages])
 
-  const assistantMessages = messages.filter((m) => m.role === "assistant")
+  const handleSendFollowup = useCallback(() => {
+    const t = followupText.trim()
+    if (!t || isAgentRunning) return
+    setFollowupText("")
+    sendMessage({ text: t })
+  }, [followupText, isAgentRunning, sendMessage])
+
+  const assistantMessages = messages
 
   return (
     <div className="h-full flex flex-col gap-0 overflow-hidden">
       {/* ─── Selected area card ─── */}
       <div className="flex-shrink-0 border-b border-zinc-800/60 p-4">
-        <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-3">
+        <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
           Selected area
+          <InfoTooltip {...TERM_DEFINITIONS.lsoa} />
         </p>
         <AnimatePresence mode="wait">
           {!selectedFeature ? (
@@ -173,10 +203,12 @@ export function AgentPanel() {
             >
               <div className="mb-2.5">
                 <p className="text-base font-medium text-zinc-100 leading-tight">
-                  {selectedFeature.name}
+                  {selectedAreaName ?? selectedFeature.name}
                 </p>
                 <p className="text-[10px] font-mono text-zinc-500 mt-0.5">
-                  {selectedLsoa}
+                  {selectedAreaName
+                    ? `${selectedFeature.name} · ${selectedLsoa}`
+                    : selectedLsoa}
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -191,23 +223,27 @@ export function AgentPanel() {
                       ? "text-amber-400"
                       : "text-green-400"
                   }
+                  tooltip={TERM_DEFINITIONS.vulnerability}
                 />
                 <StatCard
                   icon={Trees}
                   label="Canopy cover"
                   value={selectedFeature.canopy_cover_pct.toFixed(1)}
                   unit="%"
+                  tooltip={TERM_DEFINITIONS.canopy}
                 />
                 <StatCard
                   icon={Building2}
                   label="IMD decile"
                   value={selectedFeature.imd_decile}
+                  tooltip={TERM_DEFINITIONS.imd}
                 />
                 <StatCard
                   icon={Users}
                   label="Pop. density"
                   value={selectedFeature.pop_density_per_ha.toFixed(0)}
                   unit="/ha"
+                  tooltip={TERM_DEFINITIONS.density}
                 />
               </div>
             </motion.div>
@@ -259,29 +295,64 @@ export function AgentPanel() {
           isStreaming={isAgentRunning}
           streamingText={streamingText}
         />
-      </div>
 
-      {/* ─── Dossier ─── */}
-      <AnimatePresence>
-        {parsedDossier && (
-          <motion.div
-            key="dossier"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            className="flex-shrink-0 border-t border-zinc-800/60 overflow-hidden"
-          >
-            <div className="p-4">
+        {/* ── Dossier panel inline at the bottom of the trace ── */}
+        <AnimatePresence>
+          {parsedDossier && (
+            <motion.div
+              key="dossier"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="border-t border-zinc-800/60 pt-4 mt-4"
+            >
               <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-3">
                 Dossier
               </p>
               <DossierView
                 dossier={parsedDossier}
                 rawMarkdown={extractMarkdown(fullText)}
+                areaName={selectedAreaName}
               />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* ─── Follow-up chat input ─── */}
+      {(parsedDossier || messages.length > 1) && (
+        <div className="flex-shrink-0 border-t border-zinc-800/60 p-3 bg-zinc-950">
+          <div className="flex items-center gap-1.5 mb-2">
+            <MessageSquare size={10} className="text-zinc-600" />
+            <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest">
+              Ask a follow-up
+            </p>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              handleSendFollowup()
+            }}
+            className="flex gap-2"
+          >
+            <input
+              type="text"
+              value={followupText}
+              onChange={(e) => setFollowupText(e.target.value)}
+              placeholder="e.g. swap shade structures for cool roofs — what changes?"
+              disabled={isAgentRunning}
+              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-cyan-400/50 transition-colors disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={isAgentRunning || !followupText.trim()}
+              className="flex items-center gap-1.5 bg-cyan-400/15 hover:bg-cyan-400/25 disabled:opacity-30 disabled:cursor-not-allowed border border-cyan-400/40 rounded-md px-3 py-2 text-[11px] font-mono text-cyan-400 transition-colors"
+            >
+              <Send size={11} />
+              Ask
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   )
 }

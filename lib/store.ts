@@ -18,20 +18,38 @@ export interface InterventionLocation {
   lng: number
 }
 
+// Matches the JSON schema in context.md exactly.
 export interface Intervention {
   type: string
-  title: string
+  quantity: number
+  unit: "trees" | "m²" | "structures" | "roofs" | string
   rationale_short: string
-  estimated_cost_gbp: number
   target_locations: InterventionLocation[]
+  indicative_cost_gbp: number
+  evidence_effect_size: string
+  evidence_quality: "strong" | "moderate" | "weak"
+}
+
+export interface Fund {
+  name: string
+  status: "open" | "closing_soon" | "scheduled" | "unclear"
+  verified_via: "scraped" | "fallback"
+  deadline: string | null
+  max_grant_gbp: number
+  match_required_pct: number
+  covered_interventions: string[]
+  eligibility_justification: string
+  repackaging_note?: string
+  url: string
 }
 
 export interface ParsedDossier {
   lsoa_code: string
-  summary: string
   interventions: Intervention[]
-  total_estimated_cost_gbp: number
-  priority_level: string
+  funds: Fund[]
+  total_cost_gbp: number
+  fund_coverage_pct: number
+  key_trade_offs: string[]
 }
 
 export type AgentMessage =
@@ -45,6 +63,8 @@ interface CanopyStore {
   agentMessages: AgentMessage[]
   parsedDossier: ParsedDossier | null
   streamingText: string
+  // Friendly neighbourhood name (e.g. "Walworth") looked up after selection.
+  selectedAreaName: string | null
   setSelectedLsoa: (code: string | null) => void
   setLsoaData: (data: LsoaData) => void
   setIsAgentRunning: (running: boolean) => void
@@ -52,6 +72,7 @@ interface CanopyStore {
   appendAgentMessage: (msg: AgentMessage) => void
   setParsedDossier: (dossier: ParsedDossier | null) => void
   setStreamingText: (text: string) => void
+  setSelectedAreaName: (name: string | null) => void
   resetAgent: () => void
 }
 
@@ -62,6 +83,7 @@ export const useCanopyStore = create<CanopyStore>((set) => ({
   agentMessages: [],
   parsedDossier: null,
   streamingText: "",
+  selectedAreaName: null,
 
   setSelectedLsoa: (code) => set({ selectedLsoa: code }),
   setLsoaData: (data) => set({ lsoaData: data }),
@@ -71,6 +93,7 @@ export const useCanopyStore = create<CanopyStore>((set) => ({
     set((s) => ({ agentMessages: [...s.agentMessages, msg] })),
   setParsedDossier: (dossier) => set({ parsedDossier: dossier }),
   setStreamingText: (text) => set({ streamingText: text }),
+  setSelectedAreaName: (name) => set({ selectedAreaName: name }),
   resetAgent: () =>
     set({
       isAgentRunning: false,

@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.74",
     "@ai-sdk/gateway": "^3.0.109",
     "@ai-sdk/react": "^3.0.176",
     "@hookform/resolvers": "^3.9.1",
@@ -51,6 +52,7 @@
     "embla-carousel-react": "8.6.0",
     "framer-motion": "^12.38.0",
     "input-otp": "1.4.2",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.564.0",
     "maplibre-gl": "^5.24.0",
     "next": "16.2.4",

@@ -273,10 +273,89 @@ export const get_fallback_funds = tool({
   },
 })
 
+// ────────────────────────────────────────────────────────────────────────
+// 6. scrape_funding_page — live scrape via Bright Data Web Unlocker.
+// ────────────────────────────────────────────────────────────────────────
+// Calls Bright Data's Web Unlocker REST API to fetch a funding page that
+// would otherwise be blocked / dynamic. The agent uses this on each URL
+// returned by search_funding_schemes to verify open/closed status.
+//
+// Requires BRIGHT_DATA_TOKEN. Optional BRIGHT_DATA_ZONE (defaults to
+// "web_unlocker1" — the default zone name new accounts get).
+// ────────────────────────────────────────────────────────────────────────
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<\/(p|div|h[1-6]|li|tr|br)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+export const scrape_funding_page = tool({
+  description:
+    "Live-scrape a UK funding scheme page via Bright Data Web Unlocker. Returns the page text (truncated). Use this on each candidate URL from search_funding_schemes to verify open/closed status, deadlines, and grant ceilings before recommending a fund. Surface anything you find about deadlines, eligibility, max grant, and match requirements in your dossier.",
+  inputSchema: z.object({
+    url: z.string().url().describe("Funding scheme landing-page URL to scrape"),
+  }),
+  execute: async ({ url }) => {
+    const token = process.env.BRIGHT_DATA_TOKEN
+    if (!token) {
+      return {
+        error:
+          "BRIGHT_DATA_TOKEN not set. Cannot live-scrape — fall back to get_fallback_funds and disclose in dossier.",
+      }
+    }
+    const zone = process.env.BRIGHT_DATA_ZONE ?? "web_unlocker1"
+    try {
+      const r = await fetch("https://api.brightdata.com/request", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ zone, url, format: "raw" }),
+      })
+      if (!r.ok) {
+        const errText = await r.text().catch(() => "")
+        return {
+          error: `Bright Data returned ${r.status}: ${errText.slice(0, 300)}`,
+          url,
+        }
+      }
+      const html = await r.text()
+      const text = htmlToText(html).slice(0, 6000)
+      return {
+        url,
+        scraped_via: "bright_data_web_unlocker" as const,
+        zone,
+        bytes: html.length,
+        text,
+      }
+    } catch (e) {
+      return {
+        error: `Bright Data request failed: ${e instanceof Error ? e.message : String(e)}`,
+        url,
+      }
+    }
+  },
+})
+
 export const tools = {
   get_lsoa_context,
   query_lsoa_subset,
   search_evidence,
   search_funding_schemes,
+  scrape_funding_page,
   get_fallback_funds,
 }

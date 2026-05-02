@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useCallback, useState } from "react"
-import { useCanopyStore, type LsoaData } from "@/lib/store"
+import { useCanopyStore, type LsoaData, type Intervention } from "@/lib/store"
 import { vulnerabilityColour, normaliseScore, SELECTED_STROKE } from "@/lib/colours"
-import { TreePine, House, Square, Umbrella, Trees, MapPin } from "lucide-react"
+import { TreePine, House, Square, Umbrella, Trees, MapPin, X, Banknote } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 // page.tsx wraps this component in next/dynamic with ssr:false, so importing
 // maplibre at module scope is safe and avoids the dynamic-import-inside-useEffect
@@ -36,38 +36,56 @@ const DARK_STYLE: maplibregl.StyleSpecification = {
   ],
 }
 
-interface PopupInfo {
+interface SelectedMarker {
+  intervention: Intervention
   lng: number
   lat: number
-  title: string
-  rationale: string
-  cost: number
+  index: number
   x: number
   y: number
 }
 
+// Match the icon to the kind of intervention. Loose matching on substrings of
+// the agent's free-text type (per context.md, type is open-vocab).
 function getInterventionIcon(type: string) {
-  switch (type) {
-    case "street_trees": return TreePine
-    case "green_roofs":
-    case "cool_roofs": return House
-    case "cool_pavements": return Square
-    case "shade_structures": return Umbrella
-    case "pocket_parks": return Trees
-    default: return MapPin
-  }
+  const t = type.toLowerCase()
+  if (t.includes("tree")) return TreePine
+  if (t.includes("roof")) return House
+  if (t.includes("pavement") || t.includes("paving")) return Square
+  if (t.includes("shade") || t.includes("canopy") || t.includes("umbrella")) return Umbrella
+  if (t.includes("park") || t.includes("garden") || t.includes("green")) return Trees
+  return MapPin
 }
 
 function getInterventionColor(type: string): string {
-  switch (type) {
-    case "street_trees": return "#4ade80" // green-400
-    case "green_roofs":
-    case "cool_roofs": return "#60a5fa" // blue-400
-    case "cool_pavements": return "#a78bfa" // violet-400
-    case "shade_structures": return "#f59e0b" // amber-400
-    case "pocket_parks": return "#34d399" // emerald-400
-    default: return "#22d3ee" // cyan-400
-  }
+  const t = type.toLowerCase()
+  if (t.includes("tree")) return "#4ade80" // green
+  if (t.includes("cool_roof") || t.includes("cool roof")) return "#60a5fa" // blue
+  if (t.includes("green_roof") || t.includes("green roof")) return "#34d399" // emerald
+  if (t.includes("pavement") || t.includes("paving")) return "#a78bfa" // violet
+  if (t.includes("shade")) return "#f59e0b" // amber
+  if (t.includes("park") || t.includes("garden")) return "#10b981" // emerald
+  return "#22d3ee" // cyan default
+}
+
+// Encode an SVG icon string for the marker DOM. lucide-react paths inlined.
+const ICON_SVG: Record<string, string> = {
+  tree: '<path d="M12 2L8 7h2l-3 4h2l-4 5h6v6h2v-6h6l-4-5h2l-3-4h2z"/>',
+  house: '<path d="M3 12l9-9 9 9"/><path d="M5 10v10h14V10"/>',
+  square: '<rect x="4" y="4" width="16" height="16" rx="1"/>',
+  umbrella: '<path d="M12 2v2"/><path d="M2 12a10 10 0 0 1 20 0z"/><path d="M12 12v6a2 2 0 0 0 4 0"/>',
+  park: '<path d="M12 2v20"/><path d="M5 8h14"/><path d="M5 16h14"/>',
+  pin: '<path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7z"/><circle cx="12" cy="9" r="2.5"/>',
+}
+
+function getIconSvg(type: string): string {
+  const t = type.toLowerCase()
+  if (t.includes("tree")) return ICON_SVG.tree
+  if (t.includes("roof")) return ICON_SVG.house
+  if (t.includes("pavement") || t.includes("paving")) return ICON_SVG.square
+  if (t.includes("shade")) return ICON_SVG.umbrella
+  if (t.includes("park") || t.includes("garden")) return ICON_SVG.park
+  return ICON_SVG.pin
 }
 
 interface LsoaMapProps {
@@ -79,7 +97,7 @@ export function LsoaMap({ className }: LsoaMapProps) {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
   const [hoveredLsoa, setHoveredLsoa] = useState<string | null>(null)
-  const [popupInfo, setPopupInfo] = useState<PopupInfo | null>(null)
+  const [selectedMarker, setSelectedMarker] = useState<SelectedMarker | null>(null)
   const markerRefs = useRef<maplibregl.Marker[]>([])
 
   const { selectedLsoa, lsoaData, setLsoaData, setSelectedLsoa, parsedDossier, resetAgent } =
@@ -136,9 +154,6 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
 
-    // Gate on `isStyleLoaded()` rather than the `load` event — under React
-    // Strict Mode the first map gets .remove()'d immediately and the second
-    // map's `load` event sometimes never fires.
     const markReady = () => setMapLoaded(true)
     if (map.isStyleLoaded()) {
       markReady()
@@ -163,33 +178,31 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
     const geojson = buildGeoJSON(lsoaData)
 
-    // Auto-fit to bounding box
-    const coords: [number, number][] = []
-    geojson.features.forEach((f) => {
-      const geom = f.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon
-      if (geom.type === "Polygon") {
-        geom.coordinates[0].forEach(([lng, lat]) => coords.push([lng, lat]))
-      } else if (geom.type === "MultiPolygon") {
-        geom.coordinates.forEach((poly) =>
-          poly[0].forEach(([lng, lat]) => coords.push([lng, lat]))
+    // Auto-fit to bounding box on first load only
+    if (!map.getSource("lsoas")) {
+      const coords: [number, number][] = []
+      geojson.features.forEach((f) => {
+        const geom = f.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon
+        if (geom.type === "Polygon") {
+          geom.coordinates[0].forEach(([lng, lat]) => coords.push([lng, lat]))
+        } else if (geom.type === "MultiPolygon") {
+          geom.coordinates.forEach((poly) =>
+            poly[0].forEach(([lng, lat]) => coords.push([lng, lat]))
+          )
+        }
+      })
+      if (coords.length > 0) {
+        const lngs = coords.map(([lng]) => lng)
+        const lats = coords.map(([, lat]) => lat)
+        map.fitBounds(
+          [
+            [Math.min(...lngs), Math.min(...lats)],
+            [Math.max(...lngs), Math.max(...lats)],
+          ],
+          { padding: 60, duration: 800 }
         )
       }
-    })
 
-    if (coords.length > 0) {
-      const lngs = coords.map(([lng]) => lng)
-      const lats = coords.map(([, lat]) => lat)
-      const bbox: [[number, number], [number, number]] = [
-        [Math.min(...lngs), Math.min(...lats)],
-        [Math.max(...lngs), Math.max(...lats)],
-      ]
-      map.fitBounds(bbox, { padding: 60, duration: 800 })
-    }
-
-    // Add source
-    if (map.getSource("lsoas")) {
-      ;(map.getSource("lsoas") as maplibregl.GeoJSONSource).setData(geojson)
-    } else {
       map.addSource("lsoas", { type: "geojson", data: geojson })
 
       map.addLayer({
@@ -243,8 +256,11 @@ export function LsoaMap({ className }: LsoaMapProps) {
             resetAgent()
           }
           setSelectedLsoa(code)
+          setSelectedMarker(null)
         }
       })
+    } else {
+      ;(map.getSource("lsoas") as maplibregl.GeoJSONSource).setData(geojson)
     }
   }, [mapLoaded, lsoaData, buildGeoJSON, selectedLsoa, hoveredLsoa, setSelectedLsoa, resetAgent])
 
@@ -269,7 +285,7 @@ export function LsoaMap({ className }: LsoaMapProps) {
     ])
   }, [selectedLsoa, hoveredLsoa, mapLoaded])
 
-  // Render intervention markers
+  // Render intervention markers — one per target_location, grouped per intervention.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLoaded) return
@@ -277,45 +293,57 @@ export function LsoaMap({ className }: LsoaMapProps) {
     // Clear previous markers
     markerRefs.current.forEach((m) => m.remove())
     markerRefs.current = []
+    setSelectedMarker(null)
 
     if (!parsedDossier) return
 
-    parsedDossier.interventions.forEach((intervention) => {
-      const color = getInterventionColor(intervention.type)
+    // Track marker bounds so we can fit the camera nicely.
+    const allCoords: [number, number][] = []
 
-      intervention.target_locations.forEach((loc) => {
+    parsedDossier.interventions.forEach((intervention, ivIdx) => {
+      const color = getInterventionColor(intervention.type)
+      const iconSvg = getIconSvg(intervention.type)
+
+      intervention.target_locations.forEach((loc, locIdx) => {
+        if (typeof loc.lng !== "number" || typeof loc.lat !== "number") return
+        allCoords.push([loc.lng, loc.lat])
+
         const el = document.createElement("div")
         el.className = "intervention-marker"
         el.style.cssText = `
-          width: 30px; height: 30px;
-          background: ${color}22;
-          border: 1.5px solid ${color};
+          width: 32px; height: 32px;
+          background: ${color}33;
+          border: 2px solid ${color};
           border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           cursor: pointer;
-          transition: transform 0.2s;
+          transition: transform 0.15s, box-shadow 0.15s;
+          box-shadow: 0 0 0 0 ${color}66;
         `
-        el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>`
+        el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>`
 
         el.addEventListener("mouseenter", () => {
-          el.style.transform = "scale(1.2)"
+          el.style.transform = "scale(1.15)"
+          el.style.boxShadow = `0 0 0 6px ${color}22`
+        })
+        el.addEventListener("mouseleave", () => {
+          el.style.transform = "scale(1)"
+          el.style.boxShadow = `0 0 0 0 ${color}66`
+        })
+        el.addEventListener("click", (ev) => {
+          ev.stopPropagation()
           const rect = el.getBoundingClientRect()
           const containerRect = mapContainerRef.current?.getBoundingClientRect()
           if (containerRect) {
-            setPopupInfo({
+            setSelectedMarker({
+              intervention,
               lng: loc.lng,
               lat: loc.lat,
-              title: intervention.title,
-              rationale: intervention.rationale_short,
-              cost: intervention.estimated_cost_gbp,
+              index: ivIdx * 100 + locIdx,
               x: rect.left - containerRect.left + rect.width / 2,
               y: rect.top - containerRect.top,
             })
           }
-        })
-        el.addEventListener("mouseleave", () => {
-          el.style.transform = "scale(1)"
-          setPopupInfo(null)
         })
 
         const marker = new maplibregl.Marker({ element: el })
@@ -325,7 +353,32 @@ export function LsoaMap({ className }: LsoaMapProps) {
         markerRefs.current.push(marker)
       })
     })
+
+    // Fit to markers + selected LSOA
+    if (allCoords.length > 0) {
+      const lngs = allCoords.map(([lng]) => lng)
+      const lats = allCoords.map(([, lat]) => lat)
+      map.fitBounds(
+        [
+          [Math.min(...lngs), Math.min(...lats)],
+          [Math.max(...lngs), Math.max(...lats)],
+        ],
+        { padding: 120, duration: 800, maxZoom: 16 }
+      )
+    }
   }, [parsedDossier, mapLoaded])
+
+  // Compute fund cover for the open marker, if any.
+  const matchedFunds =
+    selectedMarker && parsedDossier
+      ? parsedDossier.funds.filter((f) =>
+          f.covered_interventions.some(
+            (c) =>
+              c.includes(selectedMarker.intervention.type) ||
+              selectedMarker.intervention.type.includes(c)
+          )
+        )
+      : []
 
   const handleResetView = useCallback(() => {
     if (!mapRef.current || Object.keys(lsoaData).length === 0) return
@@ -349,9 +402,6 @@ export function LsoaMap({ className }: LsoaMapProps) {
 
   return (
     <div className={`relative w-full h-full ${className ?? ""}`}>
-      {/* Map container — w-full h-full instead of absolute inset-0 because
-          maplibre-gl.css sets .maplibregl-map { position: relative } and clobbers
-          the absolute, collapsing height to 0. */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
       {/* Loading skeleton */}
@@ -389,7 +439,7 @@ export function LsoaMap({ className }: LsoaMapProps) {
         )}
       </AnimatePresence>
 
-      {/* Legend */}
+      {/* Vulnerability legend */}
       <div className="absolute bottom-10 left-4 z-10 bg-zinc-900/80 backdrop-blur-sm border border-zinc-800/60 rounded-md px-3 py-2.5">
         <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1.5">
           Heat vulnerability
@@ -407,6 +457,53 @@ export function LsoaMap({ className }: LsoaMapProps) {
         </div>
       </div>
 
+      {/* Intervention legend (shown when dossier is loaded) */}
+      <AnimatePresence>
+        {parsedDossier && parsedDossier.interventions.length > 0 && (
+          <motion.div
+            key="iv-legend"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="absolute top-4 left-4 z-10 bg-zinc-900/85 backdrop-blur-sm border border-zinc-800/60 rounded-md px-3 py-2.5 max-w-[220px]"
+          >
+            <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-2">
+              Proposed interventions
+            </p>
+            <div className="space-y-1.5">
+              {parsedDossier.interventions.map((iv, i) => {
+                const color = getInterventionColor(iv.type)
+                const Icon = getInterventionIcon(iv.type)
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <div
+                      className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{
+                        background: `${color}33`,
+                        border: `1.5px solid ${color}`,
+                      }}
+                    >
+                      <Icon size={10} className="" style={{ color }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] text-zinc-200 leading-tight truncate">
+                        {iv.type.replace(/_/g, " ")}
+                      </p>
+                      <p className="text-[9px] font-mono text-zinc-500">
+                        {iv.target_locations.length} sites · £{(iv.indicative_cost_gbp / 1000).toFixed(0)}k
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-[9px] font-mono text-zinc-600 mt-2 pt-2 border-t border-zinc-800/60">
+              Click a marker for cost & impact
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Reset view button */}
       <div className="absolute bottom-10 right-12 z-10">
         <button
@@ -417,29 +514,107 @@ export function LsoaMap({ className }: LsoaMapProps) {
         </button>
       </div>
 
-      {/* Intervention popup */}
+      {/* Persistent intervention popup (click marker) */}
       <AnimatePresence>
-        {popupInfo && (
+        {selectedMarker && (
           <motion.div
-            key="popup"
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="absolute z-20 pointer-events-none"
+            key={`popup-${selectedMarker.index}`}
+            initial={{ opacity: 0, scale: 0.95, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="absolute z-20"
             style={{
-              left: popupInfo.x,
-              top: popupInfo.y - 8,
+              left: selectedMarker.x,
+              top: selectedMarker.y - 12,
               transform: "translate(-50%, -100%)",
             }}
           >
-            <div className="bg-zinc-900 border border-zinc-700/80 rounded-md p-3 max-w-[220px] shadow-xl">
-              <p className="text-xs font-medium text-zinc-200 mb-1">{popupInfo.title}</p>
-              <p className="text-[11px] text-zinc-400 leading-relaxed mb-2">
-                {popupInfo.rationale}
+            <div className="bg-zinc-900 border border-zinc-700/80 rounded-md p-3 w-[280px] shadow-2xl">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="min-w-0 flex-1">
+                  <p
+                    className="text-[10px] font-mono uppercase tracking-widest"
+                    style={{ color: getInterventionColor(selectedMarker.intervention.type) }}
+                  >
+                    Intervention
+                  </p>
+                  <p className="text-sm font-medium text-zinc-100 leading-tight">
+                    {selectedMarker.intervention.type.replace(/_/g, " ")}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSelectedMarker(null)}
+                  className="text-zinc-500 hover:text-zinc-300 flex-shrink-0"
+                  aria-label="Close"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              <p className="text-[11px] text-zinc-400 leading-relaxed mb-2.5">
+                {selectedMarker.intervention.rationale_short}
               </p>
-              <p className="text-[11px] font-mono text-amber-400">
-                ~£{popupInfo.cost.toLocaleString()}
-              </p>
+
+              <div className="grid grid-cols-2 gap-2 mb-2.5">
+                <div className="bg-zinc-950/60 rounded p-2">
+                  <p className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
+                    Quantity
+                  </p>
+                  <p className="text-[12px] font-mono text-zinc-200">
+                    {selectedMarker.intervention.quantity}{" "}
+                    <span className="text-zinc-500">{selectedMarker.intervention.unit}</span>
+                  </p>
+                </div>
+                <div className="bg-zinc-950/60 rounded p-2">
+                  <p className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
+                    Indicative cost
+                  </p>
+                  <p className="text-[12px] font-mono text-amber-400">
+                    £{selectedMarker.intervention.indicative_cost_gbp.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-zinc-950/60 rounded p-2 mb-2.5">
+                <p className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest mb-0.5">
+                  Expected impact
+                  <span
+                    className={`ml-2 px-1.5 py-0.5 rounded border ${
+                      selectedMarker.intervention.evidence_quality === "strong"
+                        ? "border-green-400/30 text-green-400 bg-green-400/10"
+                        : selectedMarker.intervention.evidence_quality === "moderate"
+                        ? "border-amber-400/30 text-amber-400 bg-amber-400/10"
+                        : "border-zinc-700 text-zinc-500 bg-zinc-800"
+                    }`}
+                  >
+                    {selectedMarker.intervention.evidence_quality}
+                  </span>
+                </p>
+                <p className="text-[11px] text-zinc-300 leading-relaxed mt-1">
+                  {selectedMarker.intervention.evidence_effect_size}
+                </p>
+              </div>
+
+              {matchedFunds.length > 0 && (
+                <div>
+                  <p className="text-[8px] font-mono text-zinc-600 uppercase tracking-widest mb-1 flex items-center gap-1">
+                    <Banknote size={9} /> Funded by
+                  </p>
+                  <div className="space-y-1">
+                    {matchedFunds.slice(0, 3).map((f, i) => (
+                      <a
+                        key={i}
+                        href={f.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-[11px] text-cyan-400 hover:text-cyan-300 truncate"
+                      >
+                        → {f.name}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
