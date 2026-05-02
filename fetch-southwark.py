@@ -94,42 +94,45 @@ log(f"  → IMD attached")
 # ────────────────────────────────────────────────────────────────────────
 # 3. ONS population + age structure (Census 2021)
 # ────────────────────────────────────────────────────────────────────────
+# NOMIS dataset NM_2020_1 = TS007A (age by 5-year bands), keyed on c2021_age_19.
+# Bands: 0=Total, 1=under 5, 14-18=65+. Pass LSOA codes explicitly (chunked) so
+# we don't scan all ~33k EW LSOAs.
 log("Fetching ONS Census 2021 population by LSOA…")
-# NOMIS bulk download — TS007A (age by 5-year bands) for Southwark LSOAs
-# Easier: NOMIS API JSON
-NOMIS_URL = (
-    "https://www.nomisweb.co.uk/api/v01/dataset/NM_2010_1.data.json"
-    f"?date=latest&geography=TYPE151&c2021_age_6=0,1,2,3,4,5&measures=20100"
-    f"&select=geography_code,c2021_age_6_name,obs_value"
-)
-# TYPE151 = LSOA 2021. We'll filter to Southwark codes locally.
-r = requests.get(NOMIS_URL, timeout=120)
-if r.ok:
-    data = r.json()
-    # Build dict: code → {age_band: count}
-    age_map = {}
-    for obs in data.get("obs", []):
-        code = obs["geography"]["geographycode"]
+
+NOMIS_BASE = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2020_1.data.json"
+lsoa_codes = list(OUT.keys())
+age_map = {}  # code -> {band_id: count}
+
+for i in range(0, len(lsoa_codes), 100):
+    chunk = ",".join(lsoa_codes[i:i + 100])
+    params = {
+        "date": "latest",
+        "geography": chunk,
+        "measures": "20100",
+        "select": "geography_code,c2021_age_19,obs_value",
+    }
+    r = requests.get(NOMIS_BASE, params=params, timeout=120)
+    if not r.ok:
+        log(f"  ⚠ NOMIS chunk {i//100} failed ({r.status_code})")
+        continue
+    for obs in r.json().get("obs", []):
+        code = obs["geography"]["geogcode"]
         if code not in OUT:
             continue
-        band = obs["c2021_age_6"]["c2021_age_6_name"]
-        age_map.setdefault(code, {})[band] = obs["obs_value"]["value"]
+        band_id = obs["c2021_age_19"]["value"]
+        age_map.setdefault(code, {})[band_id] = obs["obs_value"]["value"]
 
-    for code, bands in age_map.items():
-        total = sum(bands.values())
-        OUT[code]["population"] = total
-        # Age 6 bands typically: "Aged 4 years and under", "Aged 5 to 15", "16-24", "25-34", "35-49", "50-64", "65+"
-        # Exact band names vary — match by substring
-        under_5 = sum(v for b, v in bands.items() if "4 years and under" in b or "0 to 4" in b.lower())
-        over_65 = sum(v for b, v in bands.items() if "65" in b)
-        if total > 0:
-            OUT[code]["pct_under_5"] = round(100 * under_5 / total, 1)
-            OUT[code]["pct_over_65"] = round(100 * over_65 / total, 1)
+for code, bands in age_map.items():
+    total = bands.get(0)  # band 0 = Total
+    if not total:
+        continue
+    OUT[code]["population"] = total
+    under_5 = bands.get(1, 0)  # band 1 = "Aged 4 years and under"
+    over_65 = sum(bands.get(b, 0) for b in (14, 15, 16, 17, 18))  # 65-69 ... 85+
+    OUT[code]["pct_under_5"] = round(100 * under_5 / total, 1)
+    OUT[code]["pct_over_65"] = round(100 * over_65 / total, 1)
 
-    log(f"  → population attached for {len(age_map)} LSOAs")
-else:
-    log(f"  ⚠ NOMIS failed ({r.status_code}) — population will be null. "
-        "Consider manual download from NOMIS.")
+log(f"  → population attached for {len(age_map)} LSOAs")
 
 # Compute pop density from polygon area (approx, EPSG:27700 in metres)
 log("Computing population density…")
@@ -184,17 +187,19 @@ log("Fetching OSM streets and buildings (this is the slow part)…")
 
 # Bbox for Southwark, generous: roughly 51.42–51.51 N, -0.12 to -0.02 W
 OVERPASS = "https://overpass-api.de/api/interpreter"
+# Overpass returns 406 for the default python-requests User-Agent.
+OVERPASS_HEADERS = {"User-Agent": "canopy-hackathon/0.1 (aman@adiathermal.co.uk)"}
 
 # Streets: highways, exclude motorways/footways/service
 streets_query = """
 [out:json][timeout:120];
-area["wikidata"="Q207614"]->.southwark;
+area["wikidata"="Q730706"]->.southwark;
 (
   way["highway"~"^(primary|secondary|tertiary|residential|unclassified|living_street)$"](area.southwark);
 );
 out geom;
 """
-r = requests.post(OVERPASS, data={"data": streets_query}, timeout=180)
+r = requests.post(OVERPASS, data={"data": streets_query}, headers=OVERPASS_HEADERS, timeout=180)
 r.raise_for_status()
 streets_data = r.json()
 log(f"  → {len(streets_data['elements'])} street ways")
@@ -202,13 +207,13 @@ log(f"  → {len(streets_data['elements'])} street ways")
 # Buildings
 buildings_query = """
 [out:json][timeout:180];
-area["wikidata"="Q207614"]->.southwark;
+area["wikidata"="Q730706"]->.southwark;
 (
   way["building"](area.southwark);
 );
 out geom;
 """
-r = requests.post(OVERPASS, data={"data": buildings_query}, timeout=300)
+r = requests.post(OVERPASS, data={"data": buildings_query}, headers=OVERPASS_HEADERS, timeout=300)
 r.raise_for_status()
 buildings_data = r.json()
 log(f"  → {len(buildings_data['elements'])} buildings")
