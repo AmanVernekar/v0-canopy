@@ -265,23 +265,22 @@ export function LsoaMap({ className }: LsoaMapProps) {
         setHoveredLsoa(null)
       })
 
-      // Click — read latest store state at click time so we can gate behind
-      // the confirm modal when work would be lost.
+      // Click — read latest store state at click time. Always confirm before
+      // switching to a different LSOA, since there's no session memory yet
+      // and any current trace/dossier (or in-flight run) would be lost.
       map.on("click", "lsoas-fill", (e) => {
         const code = e.features?.[0]?.properties?.lsoa_code as string | undefined
         if (!code) return
         const s = useCanopyStore.getState()
-        // Same area or no prior work: just go.
-        if (
-          code === s.selectedLsoa ||
-          (!s.parsedDossier && !s.isAgentRunning)
-        ) {
-          if (code !== s.selectedLsoa) s.resetAgent()
+        // Same area: no-op.
+        if (code === s.selectedLsoa) return
+        // First selection ever: nothing to lose, go direct.
+        if (s.selectedLsoa == null) {
           s.setSelectedLsoa(code)
           setSelectedMarker(null)
           return
         }
-        // Otherwise: queue the switch for user confirmation.
+        // Otherwise (any LSOA already selected): queue for confirmation.
         setPendingLsoa(code)
       })
     } else {
@@ -700,7 +699,7 @@ export function LsoaMap({ className }: LsoaMapProps) {
               <p className="text-[11px] text-zinc-500 leading-relaxed mb-4">
                 {isAgentRunning
                   ? "The current analysis is still running and will be discarded."
-                  : "The current dossier will be discarded. You can always re-run."}
+                  : "The current trace and dossier will be discarded — there's no session memory yet, so this can't be restored."}
               </p>
               <div className="flex gap-2 justify-end">
                 <button
