@@ -1,4 +1,4 @@
-import { streamText, stepCountIs, convertToModelMessages, type UIMessage } from "ai"
+import { streamText, stepCountIs, convertToModelMessages, type UIMessage, type ModelMessage } from "ai"
 import { anthropic } from "@ai-sdk/anthropic"
 import { tools } from "@/lib/agent/tools"
 import { systemPrompt } from "@/lib/agent/prompts"
@@ -19,40 +19,52 @@ export async function POST(req: Request) {
 
   const body = await req.json()
   const uiMessages: UIMessage[] = body?.messages ?? []
-
-  // Detect first turn (LSOA-trigger) vs follow-up by counting prior assistant
-  // messages — first user turn always carries an LSOA code only.
   const hasPriorAssistant = uiMessages.some((m) => m.role === "assistant")
 
-  let messages: Awaited<ReturnType<typeof convertToModelMessages>>
+  const systemText = hasPriorAssistant
+    ? `${systemPrompt}\n\n# Follow-up mode\n\nThe planner is asking a follow-up question about the dossier you just produced. Answer concisely with the same evidence-led tone. You can call tools again if a question demands fresh data. If the user asks you to revise interventions or funds, emit a new \`\`\`json block with the updated dossier (same schema). Otherwise, no JSON block needed.`
+    : systemPrompt
+
+  let convoMessages: ModelMessage[]
   if (!hasPriorAssistant) {
-    // First turn — wrap the bare LSOA code in the analysis prompt
     const lsoaCode =
       uiMessages[uiMessages.length - 1]?.parts?.find(
         (p): p is { type: "text"; text: string } => p.type === "text"
       )?.text ?? body?.lsoa_code ?? "UNKNOWN"
 
-    messages = [
+    convoMessages = [
       {
-        role: "user" as const,
+        role: "user",
         content: `Plan urban heat interventions for LSOA \`${lsoaCode}\`.
 
 Follow the STEP structure in the system prompt — emit each "## Step N:" heading verbatim so the planner can follow your reasoning. Start with get_lsoa_context, form hypotheses via query_lsoa_subset, search the evidence, then call search_funding_schemes AND scrape each candidate URL with scrape_funding_page (Bright Data) to verify status. End with the JSON block exactly as specified.`,
       },
     ]
   } else {
-    // Follow-up Q&A — pass the full conversation back, prefixed with a brief
-    // reminder so the model stays in dossier-context.
-    messages = await convertToModelMessages(uiMessages)
+    convoMessages = await convertToModelMessages(uiMessages)
   }
+
+  // Prompt caching: mark the system prompt as ephemeral-cacheable. Anthropic caches
+  // everything up to and including this block, so the system text + tool definitions
+  // (which the SDK serialises after `system`) are reused across the agent's tool-loop
+  // steps and across follow-up turns. Cache reads cost ~10% of normal input tokens.
+  const messages: ModelMessage[] = [
+    {
+      role: "system",
+      content: systemText,
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      },
+    },
+    ...convoMessages,
+  ]
 
   const result = streamText({
     model: anthropic("claude-sonnet-4-5"),
-    system: hasPriorAssistant
-      ? `${systemPrompt}\n\n# Follow-up mode\n\nThe planner is asking a follow-up question about the dossier you just produced. Answer concisely with the same evidence-led tone. You can call tools again if a question demands fresh data. If the user asks you to revise interventions or funds, emit a new \`\`\`json block with the updated dossier (same schema). Otherwise, no JSON block needed.`
-      : systemPrompt,
     messages,
     tools,
+    // Cap output ceiling — the default (64k) bloats accounting and isn't needed.
+    maxOutputTokens: 8192,
     // Allow the agent to chain tool calls — multiple rounds of tool/text steps.
     stopWhen: stepCountIs(20),
   })

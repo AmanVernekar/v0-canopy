@@ -334,7 +334,7 @@ export const scrape_funding_page = tool({
         }
       }
       const html = await r.text()
-      const text = htmlToText(html).slice(0, 6000)
+      const text = htmlToText(html).slice(0, 1500)
       return {
         url,
         scraped_via: "bright_data_web_unlocker" as const,
