@@ -7,8 +7,11 @@ __v0_jsx-dev-runtime.ts
 .vercel/
 next.user-config.*
 
-# Environment variables
-.env*.local
+# Environment variables — broad rule so any .env, .env.local,
+# .env.production, etc. is ignored. Only .env.example is committed.
+.env
+.env.*
+!.env.example
 
 # Common ignores
 node_modules

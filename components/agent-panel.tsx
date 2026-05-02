@@ -64,16 +64,26 @@ function extractMarkdown(text: string): string {
 }
 
 export function AgentPanel() {
-  const {
-    selectedLsoa,
-    lsoaData,
-    isAgentRunning,
-    setIsAgentRunning,
-    parsedDossier,
-    setParsedDossier,
-    setStreamingText,
-    streamingText,
-  } = useCanopyStore()
+  // Granular selectors so we can verify each piece of state independently.
+  // (Investigating why selectedFeature reads as null even when the agent is
+  // running — see lib/store.ts singleton notes.)
+  const selectedLsoa = useCanopyStore((s) => s.selectedLsoa)
+  const lsoaData = useCanopyStore((s) => s.lsoaData)
+  const isAgentRunning = useCanopyStore((s) => s.isAgentRunning)
+  const setIsAgentRunning = useCanopyStore((s) => s.setIsAgentRunning)
+  const parsedDossier = useCanopyStore((s) => s.parsedDossier)
+  const setParsedDossier = useCanopyStore((s) => s.setParsedDossier)
+  const setStreamingText = useCanopyStore((s) => s.setStreamingText)
+  const streamingText = useCanopyStore((s) => s.streamingText)
+
+  if (typeof window !== "undefined") {
+    // eslint-disable-next-line no-console
+    console.log("[AgentPanel render]", {
+      selectedLsoa,
+      lsoaCount: Object.keys(lsoaData).length,
+      hit: selectedLsoa ? !!lsoaData[selectedLsoa] : null,
+    })
+  }
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevSelectedRef = useRef<string | null>(null)

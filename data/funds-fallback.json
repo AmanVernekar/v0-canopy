@@ -1,0 +1,82 @@
+[
+  {
+    "name": "Defra Local Authority Treescapes Fund",
+    "url": "https://www.gov.uk/government/publications/local-authority-treescapes-fund",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 500000,
+    "match_required_pct": 0,
+    "covered_interventions": ["street_trees", "tree", "canopy", "treescape", "urban_forestry"],
+    "eligibility_notes": "England-only. Local authorities and partnerships. Targets non-woodland trees outside woodlands — strong fit for street tree planting in urban LSOAs."
+  },
+  {
+    "name": "Mayor of London — Greener City Fund (Grow Back Greener)",
+    "url": "https://www.london.gov.uk/programmes-strategies/environment-and-climate-change/parks-green-spaces-and-biodiversity/greener-city-fund",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 50000,
+    "match_required_pct": 25,
+    "covered_interventions": ["street_trees", "pocket_parks", "green_walls", "pollinator", "community_garden", "rain_garden"],
+    "eligibility_notes": "Greater London only. Community groups, schools, councils. Smaller scheme but fast turnaround; good for community-facing portions of intervention package."
+  },
+  {
+    "name": "Active Travel England — Local Transport Capability Fund",
+    "url": "https://www.gov.uk/government/organisations/active-travel-england",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 800000,
+    "match_required_pct": 0,
+    "covered_interventions": ["pedestrian_widening", "cool_pavements", "shade_structures", "active_travel", "street_redesign"],
+    "eligibility_notes": "Repackaging opportunity: cool-pavement and shade interventions can qualify if framed as pedestrian-comfort improvements alongside walking-route enhancement. Larger ceiling than single-purpose cooling funds."
+  },
+  {
+    "name": "National Lottery Heritage Fund — Green Spaces for Health",
+    "url": "https://www.heritagefund.org.uk/",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 250000,
+    "match_required_pct": 10,
+    "covered_interventions": ["pocket_parks", "park", "community_garden", "heritage", "green_space"],
+    "eligibility_notes": "UK-wide. Strong fit when intervention has a community-health framing or sits in a heritage context (e.g. Victorian terraced streets)."
+  },
+  {
+    "name": "GLA Urban Cooling Pilot Grant",
+    "url": "https://www.london.gov.uk/programmes-strategies/environment-and-climate-change",
+    "status": "scheduled",
+    "deadline": null,
+    "max_grant_gbp": 80000,
+    "match_required_pct": 20,
+    "covered_interventions": ["cool_roofs", "cool_pavements", "shade_structures", "albedo", "cooling"],
+    "eligibility_notes": "London boroughs only. Pilot — not always open. Small ceiling but fast-tracked, and explicitly funds cool-pavement / cool-roof works that don't fit elsewhere."
+  },
+  {
+    "name": "DLUHC UK Shared Prosperity Fund — Local",
+    "url": "https://www.gov.uk/government/publications/uk-shared-prosperity-fund-prospectus",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 1500000,
+    "match_required_pct": 0,
+    "covered_interventions": ["regeneration", "public_realm", "cool_pavements", "pocket_parks", "street_trees", "place_making"],
+    "eligibility_notes": "Allocated to local authorities. Wide scope. Repackage public-realm cooling work as place-based regeneration to access the larger ceiling."
+  },
+  {
+    "name": "DfE — Climate Change Strategy: School Capital",
+    "url": "https://www.gov.uk/government/publications/sustainability-and-climate-change-strategy",
+    "status": "unclear",
+    "deadline": null,
+    "max_grant_gbp": 100000,
+    "match_required_pct": 0,
+    "covered_interventions": ["school_playground_greening", "school", "shade_structures", "playground", "tree"],
+    "eligibility_notes": "Schools only. Useful when an LSOA has a school site that overlaps with the intervention zone — playground depaving and shade structures qualify."
+  },
+  {
+    "name": "Trees for Cities — Edible Playgrounds & Tree-Planting Partnership",
+    "url": "https://www.treesforcities.org/our-work/our-programmes",
+    "status": "open",
+    "deadline": null,
+    "max_grant_gbp": 60000,
+    "match_required_pct": 0,
+    "covered_interventions": ["school_playground_greening", "street_trees", "community_orchard", "tree_planting"],
+    "eligibility_notes": "Charity-administered. Smaller grants but pairs well with statutory funds and has flexible timing."
+  }
+]
