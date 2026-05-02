@@ -77,20 +77,53 @@ function getInterventionColorForPdf(type: string): [number, number, number] {
   return [34, 211, 238]
 }
 
-function captureMapForPdf(
+// Wait for the next idle render so getCanvas().toDataURL() returns pixels
+// instead of a cleared buffer. WebGL contexts with preserveDrawingBuffer can
+// still hand back blank pixels if read mid-frame. One rAF + the map's
+// internal idle event is the safest combination.
+async function waitForMapIdle(map: MapLibreMap, timeoutMs = 1500): Promise<void> {
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  if (map.loaded() && !map.isMoving() && !map.isZooming()) {
+    map.triggerRepaint()
+    await new Promise<void>((r) => requestAnimationFrame(() => r()))
+    return
+  }
+  await new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, timeoutMs)
+    map.once("idle", () => {
+      clearTimeout(t)
+      resolve()
+    })
+  })
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+}
+
+async function captureMapForPdf(
   map: MapLibreMap,
   dossier: ParsedDossier
-): { dataUrl: string; cssWidth: number; cssHeight: number; markers: Array<{ x: number; y: number; color: [number, number, number] }> } | null {
+): Promise<{
+  dataUrl: string
+  cssWidth: number
+  cssHeight: number
+  markers: Array<{ x: number; y: number; color: [number, number, number] }>
+  legend: Array<{ label: string; color: [number, number, number] }>
+} | null> {
   try {
+    await waitForMapIdle(map)
     const canvas = map.getCanvas()
     const dataUrl = canvas.toDataURL("image/png")
-    if (!dataUrl || dataUrl === "data:,") return null
+    if (!dataUrl || dataUrl === "data:," || dataUrl.length < 200) {
+      console.warn("[pdf] map canvas returned empty data URL", { len: dataUrl.length })
+      return null
+    }
     const container = map.getContainer()
     const cssWidth = container.clientWidth
     const cssHeight = container.clientHeight
     const markers: Array<{ x: number; y: number; color: [number, number, number] }> = []
+    const seenTypes = new Map<string, [number, number, number]>()
     for (const iv of dossier.interventions) {
       const color = getInterventionColorForPdf(iv.type)
+      if (!seenTypes.has(iv.type)) seenTypes.set(iv.type, color)
       for (const loc of iv.target_locations) {
         if (typeof loc.lng !== "number" || typeof loc.lat !== "number") continue
         const p = map.project([loc.lng, loc.lat])
@@ -98,13 +131,18 @@ function captureMapForPdf(
         markers.push({ x: p.x, y: p.y, color })
       }
     }
-    return { dataUrl, cssWidth, cssHeight, markers }
-  } catch {
+    const legend = Array.from(seenTypes.entries()).map(([label, color]) => ({
+      label: label.replace(/_/g, " "),
+      color,
+    }))
+    return { dataUrl, cssWidth, cssHeight, markers, legend }
+  } catch (e) {
+    console.error("[pdf] captureMapForPdf failed", e)
     return null
   }
 }
 
-function generatePdf(
+async function generatePdf(
   dossier: ParsedDossier,
   rawMarkdown: string,
   areaName: string | null,
@@ -161,21 +199,24 @@ function generatePdf(
 
   // ── Map snapshot with intervention markers ──
   if (mapInstance) {
-    const snapshot = captureMapForPdf(mapInstance, dossier)
+    const snapshot = await captureMapForPdf(mapInstance, dossier)
     if (snapshot) {
-      const imgW = W - margin * 2
-      const imgH = (snapshot.cssHeight / snapshot.cssWidth) * imgW
-      // Cap height so we don't push everything off the first page.
-      const cappedH = Math.min(imgH, 280)
-      const cappedW = (cappedH / imgH) * imgW
-      const offsetX = margin + (imgW - cappedW) / 2
       writeLine("INTERVENTION MAP", {
         size: 9,
         bold: true,
         color: [120, 120, 120],
         gap: 6,
       })
-      doc.addImage(snapshot.dataUrl, "PNG", offsetX, y, cappedW, cappedH)
+      const imgW = W - margin * 2
+      const imgH = (snapshot.cssHeight / snapshot.cssWidth) * imgW
+      const cappedH = Math.min(imgH, 280)
+      const cappedW = (cappedH / imgH) * imgW
+      const offsetX = margin + (imgW - cappedW) / 2
+      try {
+        doc.addImage(snapshot.dataUrl, "PNG", offsetX, y, cappedW, cappedH)
+      } catch (e) {
+        console.error("[pdf] addImage failed", e)
+      }
       // Overlay markers as filled circles. Positions are in CSS pixels of the
       // live map; scale by the same ratio used to fit the image.
       const sx = cappedW / snapshot.cssWidth
@@ -188,7 +229,32 @@ function generatePdf(
         const cy = y + m.y * sy
         doc.circle(cx, cy, 3.5, "FD")
       }
-      y += cappedH + 12
+      y += cappedH + 8
+      // Legend — colored dot + label per unique intervention type. Wraps at
+      // page edge.
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(9)
+      doc.setTextColor(70, 70, 70)
+      const dotR = 3
+      const itemPadX = 12
+      const lineH = 14
+      let lx = margin
+      let ly = y + 4
+      for (const item of snapshot.legend) {
+        const labelWidth = doc.getTextWidth(item.label)
+        const itemWidth = dotR * 2 + 6 + labelWidth + itemPadX
+        if (lx + itemWidth > W - margin) {
+          lx = margin
+          ly += lineH
+        }
+        doc.setFillColor(item.color[0], item.color[1], item.color[2])
+        doc.setDrawColor(255, 255, 255)
+        doc.setLineWidth(0.6)
+        doc.circle(lx + dotR, ly - dotR, dotR, "FD")
+        doc.text(item.label, lx + dotR * 2 + 4, ly)
+        lx += itemWidth
+      }
+      y = ly + 8
     }
   }
 
@@ -292,7 +358,9 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
     // Read the map ref non-reactively at click time so the dossier view
     // doesn't re-render on every map move.
     const mapInstance = useCanopyStore.getState().mapInstance
-    generatePdf(dossier, rawMarkdown, areaName, mapInstance)
+    void generatePdf(dossier, rawMarkdown, areaName, mapInstance).catch((e) => {
+      console.error("[pdf] generation failed", e)
+    })
   }, [dossier, rawMarkdown, areaName])
 
   // Headline card values

@@ -21,6 +21,10 @@ interface ReasoningTraceProps {
   messages: UIMessage[]
   isStreaming: boolean
   streamingText: string
+  // When true, the empty-state placeholder ("Awaiting analysis trigger…") is
+  // suppressed. Used by the follow-up trace section that lives below the
+  // dossier — it should be invisible until the user actually asks something.
+  hideEmptyState?: boolean
 }
 
 // Map our tools to friendly labels and icons. The subtitle is computed from
@@ -398,8 +402,10 @@ export function ReasoningTrace({
   messages,
   isStreaming,
   streamingText,
+  hideEmptyState = false,
 }: ReasoningTraceProps) {
   if (messages.length === 0 && !isStreaming) {
+    if (hideEmptyState) return null
     return (
       <div className="flex-1 flex items-center justify-center py-6">
         <div className="text-center space-y-2">

@@ -67,6 +67,10 @@ Follow the STEP structure in the system prompt — emit each "## Step N:" headin
     maxOutputTokens: 8192,
     // Allow the agent to chain tool calls — multiple rounds of tool/text steps.
     stopWhen: stepCountIs(20),
+    // Suppress the SDK's prompt-injection warning. We're putting our own
+    // hardcoded system prompt in messages[0] specifically so we can attach
+    // anthropic cacheControl — none of it is user-supplied.
+    allowSystemInMessages: true,
   })
 
   return result.toUIMessageStreamResponse()

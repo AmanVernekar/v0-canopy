@@ -175,7 +175,16 @@ export function AgentPanel() {
     sendMessage({ text: t })
   }, [followupText, isAgentRunning, sendMessage])
 
-  const assistantMessages = messages
+  // Split messages into the initial run vs follow-ups so the dossier can sit
+  // *between* them — follow-up Q&A then naturally renders at the bottom and
+  // the user doesn't have to scroll up past the dossier to see their answer.
+  const firstAssistantIdx = messages.findIndex((m) => m.role === "assistant")
+  const initialMessages =
+    firstAssistantIdx === -1 ? messages : messages.slice(0, firstAssistantIdx + 1)
+  const followupMessages =
+    firstAssistantIdx === -1 ? [] : messages.slice(firstAssistantIdx + 1)
+  const isStreamingFollowup = isAgentRunning && followupMessages.length > 0
+  const isStreamingInitial = isAgentRunning && !isStreamingFollowup
 
   return (
     <div className="h-full flex flex-col gap-0 overflow-hidden">
@@ -302,12 +311,12 @@ export function AgentPanel() {
         )}
 
         <ReasoningTrace
-          messages={assistantMessages}
-          isStreaming={isAgentRunning}
+          messages={initialMessages}
+          isStreaming={isStreamingInitial}
           streamingText={streamingText}
         />
 
-        {/* ── Dossier panel inline at the bottom of the trace ── */}
+        {/* ── Dossier panel sits between the initial run and any follow-ups ── */}
         <AnimatePresence>
           {parsedDossier && (
             <motion.div
@@ -327,6 +336,21 @@ export function AgentPanel() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ── Follow-up Q&A trace, below the dossier ── */}
+        {(followupMessages.length > 0 || isStreamingFollowup) && (
+          <div className="border-t border-zinc-800/60 pt-4 mt-4">
+            <p className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+              <MessageSquare size={10} /> Follow-up
+            </p>
+            <ReasoningTrace
+              messages={followupMessages}
+              isStreaming={isStreamingFollowup}
+              streamingText=""
+              hideEmptyState
+            />
+          </div>
+        )}
       </div>
 
       {/* ─── Follow-up chat input ─── */}

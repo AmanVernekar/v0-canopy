@@ -53,11 +53,55 @@ interface FundProfile {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Geometry helpers — used by get_lsoa_context and query_lsoa_subset to give
+// the agent real coordinates so it can place markers inside the LSOA polygon
+// instead of guessing.
+// ────────────────────────────────────────────────────────────────────────
+function computeBbox(geom: GeoJSON.Polygon | GeoJSON.MultiPolygon): {
+  bbox: [number, number, number, number]
+  centroid: [number, number]
+} {
+  let minLng = Infinity,
+    minLat = Infinity,
+    maxLng = -Infinity,
+    maxLat = -Infinity
+  const visit = (ring: GeoJSON.Position[]) => {
+    for (const [lng, lat] of ring) {
+      if (lng < minLng) minLng = lng
+      if (lng > maxLng) maxLng = lng
+      if (lat < minLat) minLat = lat
+      if (lat > maxLat) maxLat = lat
+    }
+  }
+  if (geom.type === "Polygon") {
+    visit(geom.coordinates[0])
+  } else {
+    geom.coordinates.forEach((poly) => visit(poly[0]))
+  }
+  return {
+    bbox: [minLng, minLat, maxLng, maxLat],
+    centroid: [(minLng + maxLng) / 2, (minLat + maxLat) / 2],
+  }
+}
+
+function streetMidpoint(coords: [number, number][]): [number, number] | null {
+  if (coords.length === 0) return null
+  if (coords.length === 1) return coords[0]
+  // Take the geometric mid by index — close enough for marker placement, no
+  // need to compute true cumulative-length midpoint for a hackathon.
+  return coords[Math.floor(coords.length / 2)]
+}
+
+function round6(n: number): number {
+  return Math.round(n * 1e6) / 1e6
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 1. get_lsoa_context — token-efficient profile of the LSOA. Always first.
 // ────────────────────────────────────────────────────────────────────────
 export const get_lsoa_context = tool({
   description:
-    "Get the full context profile for a specific LSOA (Lower Super Output Area). Returns vulnerability indicators, demographics, canopy cover, deprivation, and a summary of street/building stock. Always call this FIRST for any new LSOA.",
+    "Get the full context profile for a specific LSOA (Lower Super Output Area). Returns vulnerability indicators, demographics, canopy cover, deprivation, AND geographic anchors (bbox, centroid, named streets with midpoint coordinates) you must use to place intervention markers inside the polygon. Always call this FIRST for any new LSOA.",
   inputSchema: z.object({
     lsoa_code: z.string().describe("LSOA 2021 code, e.g. E01003911"),
   }),
@@ -66,12 +110,31 @@ export const get_lsoa_context = tool({
     const lsoa = data[lsoa_code]
     if (!lsoa) return { error: `LSOA ${lsoa_code} not found in dataset` }
 
-    // Token-efficient: omit the bulky streets/buildings arrays here, return summary stats.
     const highwayBreakdown: Record<string, number> = {}
     for (const s of lsoa.streets) {
       const h = s.highway ?? "unknown"
       highwayBreakdown[h] = (highwayBreakdown[h] ?? 0) + 1
     }
+
+    const { bbox, centroid } = computeBbox(lsoa.geometry)
+
+    // Named streets with midpoint coordinates — the agent uses these as the
+    // primary anchors for intervention target_locations. Without coords here
+    // the agent hallucinates points outside the polygon.
+    const namedStreets = lsoa.streets
+      .filter((s) => s.name && s.coords.length > 0)
+      .slice(0, 12)
+      .map((s) => {
+        const mid = streetMidpoint(s.coords)
+        return mid
+          ? {
+              name: s.name,
+              highway: s.highway,
+              midpoint: { lng: round6(mid[0]), lat: round6(mid[1]) },
+            }
+          : null
+      })
+      .filter(Boolean)
 
     return {
       lsoa_code,
@@ -87,10 +150,16 @@ export const get_lsoa_context = tool({
       building_count: lsoa.building_count,
       street_count: lsoa.streets.length,
       highway_breakdown: highwayBreakdown,
-      named_streets_sample: lsoa.streets
-        .filter((s) => s.name)
-        .slice(0, 8)
-        .map((s) => s.name),
+      // Geographic anchors — every target_locations entry MUST be inside this
+      // bbox. Use named_streets[*].midpoint as starting points.
+      bbox: {
+        lng_min: round6(bbox[0]),
+        lat_min: round6(bbox[1]),
+        lng_max: round6(bbox[2]),
+        lat_max: round6(bbox[3]),
+      },
+      centroid: { lng: round6(centroid[0]), lat: round6(centroid[1]) },
+      named_streets: namedStreets,
     }
   },
 })
@@ -140,7 +209,15 @@ export const query_lsoa_subset = tool({
       return {
         target,
         count: items.length,
-        items: items.slice(0, 50).map((s) => ({ id: s.id, name: s.name, highway: s.highway })),
+        items: items.slice(0, 50).map((s) => {
+          const mid = streetMidpoint(s.coords)
+          return {
+            id: s.id,
+            name: s.name,
+            highway: s.highway,
+            midpoint: mid ? { lng: round6(mid[0]), lat: round6(mid[1]) } : null,
+          }
+        }),
       }
     } else {
       const items = lsoa.buildings

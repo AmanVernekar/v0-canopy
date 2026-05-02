@@ -68,7 +68,15 @@ Write a tight summary in markdown: priority assessment, intervention table, cost
 }
 \`\`\`
 
-\`target_locations\` MUST be lat/lng coordinates that fall inside the selected LSOA. Use the geometry returned by \`get_lsoa_context\` (or just the named-streets sample as a guide) to pick plausible points. Don't invent coordinates outside the LSOA. Each intervention should have 2–6 target locations distributed across the relevant streets, NOT a single point.
+**CRITICAL — coordinate sourcing.** \`target_locations\` MUST be {lat, lng} coordinates that fall inside the LSOA's \`bbox\` returned by \`get_lsoa_context\`. Pick coords from these sources, in order of preference:
+
+1. **\`named_streets[*].midpoint\` from \`get_lsoa_context\`** — each entry already has real lng/lat for that street, inside the polygon. This is the default source.
+2. **\`items[*].midpoint\` from \`query_lsoa_subset\` (with \`summary_only: false\`)** — same shape, useful when you've filtered to a specific street type.
+3. **The LSOA \`centroid\`** — only as a fallback if no streets fit the intervention.
+
+Slightly perturb the chosen midpoints (±0.0003° ~ 30m) when distributing 2–6 markers along one street so they don't stack. **NEVER invent or guess coordinates from the LSOA name or code.** If a coordinate falls outside the bbox you returned, it's wrong — re-pick from the named_streets list.
+
+Each intervention should have 2–6 target locations distributed across relevant streets, NOT a single point.
 
 # Hard rules
 
