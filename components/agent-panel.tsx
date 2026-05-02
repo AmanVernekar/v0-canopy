@@ -20,6 +20,7 @@ import { useCanopyStore } from "@/lib/store"
 import type { ParsedDossier } from "@/lib/store"
 import { ReasoningTrace } from "@/components/reasoning-trace"
 import { DossierView } from "@/components/dossier-view"
+import { InterventionsBanner } from "@/components/interventions-banner"
 import { InfoTooltip, TERM_DEFINITIONS } from "@/components/info-tooltip"
 import { resolveAreaName } from "@/lib/area-name"
 import { getSessionId } from "@/lib/session"
@@ -327,6 +328,13 @@ export function AgentPanel() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* ─── Live interventions banner — fed by propose_intervention tool ─── */}
+      {messages.length > 0 && (
+        <div className="flex-shrink-0 px-4 pt-3">
+          <InterventionsBanner messages={messages} />
+        </div>
+      )}
 
       {/* ─── Agent reasoning ─── */}
       <div className="flex-shrink-0 flex items-center gap-2 px-4 pt-4 pb-2">
