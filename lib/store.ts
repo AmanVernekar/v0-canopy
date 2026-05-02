@@ -64,6 +64,12 @@ export interface VulnerabilitySummary {
   headline?: string
 }
 
+export interface ComparableLsoa {
+  lsoa_code: string
+  name: string
+  note: string
+}
+
 export interface ParsedDossier {
   lsoa_code: string
   place_archetype?: string
@@ -76,6 +82,8 @@ export interface ParsedDossier {
   fund_coverage_pct?: number
   optimistic_coverage_pct?: number
   realistic_coverage_pct?: number
+  counterfactual_2050?: string
+  comparable_lsoas?: ComparableLsoa[]
   equity_audit?: string
   key_trade_offs: string[]
 }

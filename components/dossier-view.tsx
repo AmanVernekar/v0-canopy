@@ -342,6 +342,259 @@ async function generatePdf(
   doc.save(`canopy-dossier-${dossier.lsoa_code}.pdf`)
 }
 
+// ─── Bid-pack export ─────────────────────────────────────────────────────
+// Single-page executive summary + pre-filled answers to the standard UK
+// environment-grant question stems. The "save real work" view: planners
+// rarely send the full dossier to a fund body; they paraphrase from it. The
+// bid pack does the paraphrasing.
+async function generateBidPack(
+  dossier: ParsedDossier,
+  areaName: string | null,
+  mapInstance: MapLibreMap | null
+) {
+  const doc = new jsPDF({ unit: "pt", format: "a4" })
+  const W = doc.internal.pageSize.getWidth()
+  const H = doc.internal.pageSize.getHeight()
+  const margin = 48
+  let y = margin
+
+  const writeLine = (
+    text: string,
+    opts: { size?: number; bold?: boolean; color?: [number, number, number]; gap?: number } = {}
+  ) => {
+    const { size = 10, bold = false, color = [40, 40, 40], gap = 4 } = opts
+    doc.setFont("helvetica", bold ? "bold" : "normal")
+    doc.setFontSize(size)
+    doc.setTextColor(...color)
+    const lines = doc.splitTextToSize(text, W - margin * 2)
+    for (const line of lines) {
+      if (y > H - margin) {
+        doc.addPage()
+        y = margin
+      }
+      doc.text(line, margin, y)
+      y += size + gap
+    }
+  }
+
+  // ── Header ──
+  doc.setFillColor(247, 244, 238)
+  doc.rect(0, 0, W, 90, "F")
+  doc.setDrawColor(74, 103, 65)
+  doc.setLineWidth(2)
+  doc.line(0, 90, W, 90)
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(22)
+  doc.setTextColor(31, 29, 24)
+  doc.text("Climate Adaptation Bid Pack", margin, 42)
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(10)
+  doc.setTextColor(74, 103, 65)
+  doc.text(
+    `${areaName ?? "Selected area"} · LSOA ${dossier.lsoa_code}` +
+      (dossier.place_archetype ? ` · ${dossier.place_archetype}` : ""),
+    margin,
+    62
+  )
+  doc.setFontSize(8)
+  doc.setTextColor(140, 133, 118)
+  doc.text(
+    `Prepared by Canopy · ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`,
+    margin,
+    78
+  )
+  y = 110
+
+  // ── Executive summary panel ──
+  writeLine("EXECUTIVE SUMMARY", {
+    size: 9,
+    bold: true,
+    color: [120, 120, 120],
+    gap: 6,
+  })
+  if (dossier.counterfactual_2050) {
+    writeLine(`Without action: ${dossier.counterfactual_2050}`, {
+      size: 11,
+      bold: true,
+      color: [125, 38, 21],
+      gap: 6,
+    })
+  }
+  const optimistic = dossier.optimistic_coverage_pct ?? dossier.fund_coverage_pct ?? 0
+  const realistic = dossier.realistic_coverage_pct ?? optimistic
+  writeLine(
+    `Total programme cost: £${dossier.total_cost_gbp.toLocaleString()}` +
+      (dossier.total_annual_maintenance_gbp != null
+        ? ` capital · £${dossier.total_annual_maintenance_gbp.toLocaleString()}/year ongoing`
+        : ""),
+    { size: 11, bold: true, gap: 4 }
+  )
+  writeLine(
+    `Realistic fund coverage (risk-adjusted): ${Math.round(realistic)}%   ·   Optimistic: ${Math.round(optimistic)}%`,
+    { size: 10, color: [80, 80, 80], gap: 6 }
+  )
+  if (dossier.vulnerability_summary?.headline) {
+    writeLine(dossier.vulnerability_summary.headline, {
+      size: 10,
+      color: [80, 80, 80],
+      gap: 8,
+    })
+  }
+
+  // ── Map snapshot (compact) ──
+  if (mapInstance) {
+    const snapshot = await captureMapForPdf(mapInstance, dossier)
+    if (snapshot) {
+      const imgW = (W - margin * 2) * 0.75
+      const imgH = (snapshot.cssHeight / snapshot.cssWidth) * imgW
+      const cappedH = Math.min(imgH, 180)
+      const cappedW = (cappedH / imgH) * imgW
+      const offsetX = margin + ((W - margin * 2) - cappedW) / 2
+      try {
+        doc.addImage(snapshot.dataUrl, "PNG", offsetX, y, cappedW, cappedH)
+      } catch {}
+      const sx = cappedW / snapshot.cssWidth
+      const sy = cappedH / snapshot.cssHeight
+      for (const m of snapshot.markers) {
+        doc.setFillColor(m.color[0], m.color[1], m.color[2])
+        doc.setDrawColor(255, 255, 255)
+        doc.setLineWidth(0.7)
+        doc.circle(offsetX + m.x * sx, y + m.y * sy, 3, "FD")
+      }
+      y += cappedH + 12
+    }
+  }
+
+  // ── Pre-filled grant questions ──
+  writeLine("STANDARD GRANT QUESTIONS — DRAFT ANSWERS", {
+    size: 9,
+    bold: true,
+    color: [120, 120, 120],
+    gap: 6,
+  })
+
+  const acceptedInterventions = dossier.interventions
+  const liveFunds = dossier.funds.filter((f) => f.status === "open" || f.status === "closing_soon")
+  const topFund = liveFunds.sort(
+    (a, b) => (b.award_probability ?? 0.3) - (a.award_probability ?? 0.3)
+  )[0]
+
+  const qa: { q: string; a: string }[] = [
+    {
+      q: "What is the proposed project and where will it be delivered?",
+      a:
+        `${acceptedInterventions.length} interventions across ${areaName ?? dossier.lsoa_code} (LSOA ${dossier.lsoa_code}` +
+        (dossier.place_archetype ? `, ${dossier.place_archetype}` : "") +
+        `): ${acceptedInterventions
+          .slice(0, 4)
+          .map((iv) => iv.type.replace(/_/g, " "))
+          .join("; ")}${acceptedInterventions.length > 4 ? "; and more" : ""}.`,
+    },
+    {
+      q: "What is the project's value-for-money case?",
+      a:
+        `Total capital cost £${dossier.total_cost_gbp.toLocaleString()}` +
+        (dossier.total_annual_maintenance_gbp != null
+          ? `, with ~£${dossier.total_annual_maintenance_gbp.toLocaleString()}/year maintenance`
+          : "") +
+        `. ` +
+        (acceptedInterventions
+          .filter((iv) => iv.evidence_quality === "strong")
+          .map((iv) => `${iv.type}: ${iv.evidence_effect_size}`)
+          .slice(0, 2)
+          .join(" ") || "Evidence-cited per intervention; see appendix.") +
+        " Risk-adjusted fund coverage estimated at " +
+        Math.round(realistic) +
+        "%.",
+    },
+    {
+      q: "How does this contribute to climate adaptation?",
+      a: dossier.counterfactual_2050
+        ? `Counterfactual: ${dossier.counterfactual_2050} The proposal directly reduces these risks via ${[
+            ...new Set(acceptedInterventions.flatMap((iv) => iv.axes_addressed ?? [])),
+          ].join(" and ")} interventions across the LSOA.`
+        : `Reduces both heat and surface-water flood risk across the LSOA via ${[
+            ...new Set(acceptedInterventions.flatMap((iv) => iv.axes_addressed ?? [])),
+          ].join(" and ")} interventions.`,
+    },
+    {
+      q: "What are the biodiversity / co-benefits?",
+      a:
+        [...new Set(acceptedInterventions.flatMap((iv) => iv.co_benefits ?? []))]
+          .slice(0, 6)
+          .join("; ") || "See per-intervention rationale in appendix.",
+    },
+    {
+      q: "What is the equity case?",
+      a:
+        dossier.equity_audit ??
+        "Targets a high-vulnerability LSOA — see vulnerability composite (heat + flood) and demographic profile in appendix.",
+    },
+    {
+      q: "What is the proposed match funding?",
+      a: liveFunds.length
+        ? liveFunds
+            .map(
+              (f) =>
+                `${f.name}: up to £${f.max_grant_gbp.toLocaleString()}, ${f.match_required_pct}% match required` +
+                (f.match_secured_pct ? ` (${f.match_secured_pct}% secured)` : " — match-source TBC")
+            )
+            .join(". ")
+        : "To be sourced via council capital programme; specific scheme to be selected on this dossier.",
+    },
+    {
+      q: "What community engagement is planned?",
+      a:
+        "Standard borough consultation: ward-councillor briefing, residents' association engagement, school engagement where school sites are involved, statutory pre-app where Highways changes are proposed. Engagement plan tracked alongside design milestones.",
+    },
+    {
+      q: "What are the key delivery risks?",
+      a: dossier.key_trade_offs?.length
+        ? dossier.key_trade_offs.join("; ")
+        : "Programme phasing risk and statutory approvals — managed through standard delivery governance.",
+    },
+  ]
+
+  for (const { q, a } of qa) {
+    writeLine(q, { size: 10, bold: true, gap: 3 })
+    writeLine(a, { size: 9, color: [60, 60, 60], gap: 8 })
+  }
+
+  // ── Top recommended fund ──
+  if (topFund) {
+    if (y > H - margin - 100) {
+      doc.addPage()
+      y = margin
+    }
+    writeLine("RECOMMENDED FIRST APPLICATION", {
+      size: 9,
+      bold: true,
+      color: [120, 120, 120],
+      gap: 6,
+    })
+    writeLine(topFund.name, { size: 12, bold: true, gap: 3 })
+    writeLine(
+      `Up to £${topFund.max_grant_gbp.toLocaleString()}` +
+        (topFund.deadline ? `  ·  Deadline ${topFund.deadline}` : "") +
+        (topFund.award_probability != null
+          ? `  ·  Estimated award probability ${Math.round(topFund.award_probability * 100)}%`
+          : ""),
+      { size: 10, color: [80, 80, 80], gap: 4 }
+    )
+    writeLine(topFund.eligibility_justification, { size: 9, color: [80, 80, 80], gap: 4 })
+    if (topFund.weaknesses && topFund.weaknesses.length) {
+      writeLine(`Risks to address: ${topFund.weaknesses.join("; ")}`, {
+        size: 9,
+        color: [125, 38, 21],
+        gap: 4,
+      })
+    }
+    writeLine(topFund.url, { size: 8, color: [60, 100, 180], gap: 6 })
+  }
+
+  doc.save(`canopy-bidpack-${dossier.lsoa_code}.pdf`)
+}
+
 export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps) {
   const handleDownloadMarkdown = useCallback(() => {
     const md = buildMarkdown(dossier, rawMarkdown, areaName)
@@ -362,6 +615,13 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
       console.error("[pdf] generation failed", e)
     })
   }, [dossier, rawMarkdown, areaName])
+
+  const handleDownloadBidPack = useCallback(() => {
+    const mapInstance = useCanopyStore.getState().mapInstance
+    void generateBidPack(dossier, areaName, mapInstance).catch((e) => {
+      console.error("[bid-pack] generation failed", e)
+    })
+  }, [dossier, areaName])
 
   // Headline numbers — prefer the realistic (risk-adjusted) coverage when the
   // agent supplied it. Older dossiers only have fund_coverage_pct.
@@ -416,6 +676,18 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
           </div>
         </div>
       </div>
+
+      {/* ── Counterfactual urgency line ── */}
+      {dossier.counterfactual_2050 && (
+        <div className="bg-heat-soft/60 border-l-2 border-heat rounded-r-md p-2.5">
+          <p className="text-[9px] font-mono text-heat-deep uppercase tracking-widest mb-0.5">
+            If nothing changes
+          </p>
+          <p className="text-[12px] font-medium text-heat-deep leading-relaxed">
+            {dossier.counterfactual_2050}
+          </p>
+        </div>
+      )}
 
       {/* ── Place + vulnerability strip ── */}
       {(dossier.place_archetype || heatScore != null || floodScore != null) && (
@@ -643,6 +915,25 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
         </div>
       )}
 
+      {/* ── Comparable LSOAs ── */}
+      {dossier.comparable_lsoas && dossier.comparable_lsoas.length > 0 && (
+        <div className="bg-flood-soft/40 border-l-2 border-flood/50 rounded-r-md p-2.5 space-y-1.5">
+          <p className="text-[9px] font-mono text-flood-deep uppercase tracking-widest">
+            Compared to similar neighbourhoods
+          </p>
+          <div className="space-y-1.5">
+            {dossier.comparable_lsoas.map((c, i) => (
+              <div key={i} className="text-[11px] text-ink leading-relaxed">
+                <span className="font-mono text-flood-deep">
+                  {c.name} ({c.lsoa_code})
+                </span>
+                <span className="text-ink-muted"> — {c.note}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Equity audit ── */}
       {dossier.equity_audit && (
         <div className="bg-evidence-soft/50 border-l-2 border-evidence/50 rounded-r-md p-2.5 space-y-1">
@@ -675,20 +966,28 @@ export function DossierView({ dossier, rawMarkdown, areaName }: DossierViewProps
       )}
 
       {/* ── Downloads ── */}
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <button
           onClick={handleDownloadPdf}
-          className="flex-1 flex items-center gap-2 text-[11px] font-mono text-evidence-deep bg-evidence-soft hover:bg-evidence-soft/80 border border-evidence/40 hover:border-evidence/60 rounded-md px-3 py-2 transition-all justify-center group"
+          className="flex items-center gap-2 text-[11px] font-mono text-evidence-deep bg-evidence-soft hover:bg-evidence-soft/80 border border-evidence/40 hover:border-evidence/60 rounded-md px-3 py-2 transition-all justify-center group"
         >
           <FileText size={12} className="group-hover:translate-y-0.5 transition-transform" />
-          Download PDF
+          Full dossier PDF
+        </button>
+        <button
+          onClick={handleDownloadBidPack}
+          className="flex items-center gap-2 text-[11px] font-mono text-fund-deep bg-fund-soft hover:bg-fund-soft/80 border border-fund/40 hover:border-fund/60 rounded-md px-3 py-2 transition-all justify-center group"
+          title="One-page exec summary + pre-filled standard UK env-grant questions"
+        >
+          <FileText size={12} className="group-hover:translate-y-0.5 transition-transform" />
+          Bid pack
         </button>
         <button
           onClick={handleDownloadMarkdown}
-          className="flex items-center gap-2 text-[11px] font-mono text-ink-muted hover:text-ink bg-paper-elevated hover:bg-paper-deep border border-line-strong/70 rounded-md px-3 py-2 transition-all justify-center"
+          className="col-span-2 flex items-center gap-2 text-[11px] font-mono text-ink-muted hover:text-ink bg-paper-elevated hover:bg-paper-deep border border-line-strong/70 rounded-md px-3 py-2 transition-all justify-center"
         >
           <Download size={12} />
-          .md
+          Download as .md
         </button>
       </div>
     </motion.div>

@@ -166,6 +166,15 @@ const TOOL_META: Record<string, ToolMeta> = {
       return f ? `stress-test ${f}` : null
     },
   },
+  compare_to_similar_lsoas: {
+    label: "Comparing neighbourhoods",
+    icon: MapPin,
+    defaultSub: "nearest-neighbour LSOAs in this city",
+    describe: (args) => {
+      const code = asString(args?.lsoa_code)
+      return code ? `near ${code}` : null
+    },
+  },
 }
 
 function getToolMeta(

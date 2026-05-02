@@ -48,13 +48,26 @@ For EACH fund-intervention pairing, list 2–3 reasons it might fail or under-de
 
 Then assign each pairing an **award_probability** (0–1) and a **match_secured_pct** (0–100, default 0 unless evidence). The dossier's *realistic_coverage_pct* uses these numbers, not raw eligibility.
 
-## Step 7 · Final dossier
+## Step 7a · Compare to similar neighbourhoods
+Call \`compare_to_similar_lsoas\` once. Look at the 2 nearest-neighbour LSOAs in this city. If any have a prior analysis (saved dossier), note one specific way THIS proposal differs from theirs. If neighbours haven't been analysed yet, briefly observe what their indicators predict and skip to Step 7. This step is what makes Canopy feel borough-aware.
+
+## Step 7 · Counterfactual urgency
+Estimate, in one sentence, what happens to this LSOA if NOTHING is done. Use the LSOA's own indicators (heat vulnerability, % over-65, % under-5, canopy %, density) to ground a defensible 2050 figure. A reasonable rule of thumb to start from (then adjust per LSOA):
+
+- *Heat-related excess summer deaths/year by 2050* ≈ \`population × (pct_over_65 + pct_under_5) / 100 × 0.0025 × heat_score\`
+- *Surface-water flood-affected properties by 2050* ≈ \`building_count × flood_score × 0.4\` (only if flood_score is meaningful)
+
+Round and qualify ("estimated 14–18 excess summer deaths/year by 2050 if nothing changes"). Mark this as estimate-only — UKCP18 + Public Health England derived. The point is to make urgency concrete, not to claim precision.
+
+## Step 8 · Final dossier
 Write a tight markdown summary:
+- **Counterfactual** — one bold line on what 2050 looks like with no action.
 - **Headline**: priority assessment + realistic_coverage_pct + axes addressed
 - **Place** — one sentence, archetype + headline vulnerabilities
 - **Interventions table** — name, axes, quantity, cost, maintenance/yr, evidence
 - **Funds table** — name, status, deadline, max grant, match required, **award probability**, **match gap**
 - **Equity audit** — one paragraph: who benefits, who doesn't, what's the demographic-fairness story?
+- **Comparable LSOAs** (if you called \`compare_to_similar_lsoas\`) — one sentence on how this proposal differs from what neighbours did.
 - **Key trade-offs** — 2–4 bullets
 
 Then end with EXACTLY ONE fenced \`\`\`json block matching the schema below.
@@ -110,6 +123,10 @@ Then end with EXACTLY ONE fenced \`\`\`json block matching the schema below.
   "total_annual_maintenance_gbp": number,
   "optimistic_coverage_pct": number,         // raw eligibility match
   "realistic_coverage_pct": number,          // Σ(award_prob × match_secured × max_grant) / total_cost × 100
+  "counterfactual_2050": string,             // one-line estimate of "do-nothing" 2050 outcome
+  "comparable_lsoas": [                      // optional, populate if you called compare_to_similar_lsoas
+    { "lsoa_code": string, "name": string, "note": string }
+  ],
   "equity_audit": string,
   "key_trade_offs": string[]
 }

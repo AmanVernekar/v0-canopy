@@ -810,6 +810,90 @@ export const critique_funding_match = tool({
   },
 })
 
+// ────────────────────────────────────────────────────────────────────────
+// 11. compare_to_similar_lsoas — pick 2 nearest-neighbour LSOAs in the same
+//     city for archetype-matched comparison. Lets the agent point at past
+//     analyses (saved Supabase rows) to argue "this proposal differs because…".
+// ────────────────────────────────────────────────────────────────────────
+//
+// Uses a cheap k-NN: same city, similar vulnerability score (±0.1) and
+// similar canopy. Returns 2 codes + names + their parsed_dossier headline if
+// they've been previously analysed (otherwise just the metadata).
+// ────────────────────────────────────────────────────────────────────────
+export const compare_to_similar_lsoas = tool({
+  description:
+    "Find 2 nearest-neighbour LSOAs in the same city — similar vulnerability score, IMD decile, and canopy cover. If they've been previously analysed in this session, returns their dossier headlines; otherwise just metadata. Use this in Step 8 to argue why your proposal for THIS LSOA differs from what neighbours did. Skip if the city has too few analysed neighbours.",
+  inputSchema: z.object({
+    lsoa_code: z.string(),
+    k: z.number().int().min(1).max(4).default(2),
+  }),
+  execute: async ({ lsoa_code, k }) => {
+    const target = await getLsoa(lsoa_code)
+    if (!target) return { error: `Target LSOA ${lsoa_code} not found` }
+    const all = await loadLsoas()
+    const candidates = Object.entries(all)
+      .filter(([code, v]) => {
+        if (code === lsoa_code) return false
+        const sameCity = (v as LsoaRecord & { city?: string }).city ===
+          (target as LsoaRecord & { city?: string }).city
+        return sameCity
+      })
+      .map(([code, v]) => {
+        const dv = Math.abs((v.vulnerability_score ?? 0.5) - (target.vulnerability_score ?? 0.5))
+        const dc = Math.abs((v.canopy_cover_pct ?? 10) - (target.canopy_cover_pct ?? 10)) / 30
+        const di = Math.abs((v.imd_decile ?? 5) - (target.imd_decile ?? 5)) / 10
+        const dist = dv * 0.6 + dc * 0.25 + di * 0.15
+        return { code, record: v, dist }
+      })
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, k)
+
+    // If Supabase is configured, look up previous parsed_dossier headlines.
+    let priorAnalyses: Record<string, { area_name: string | null; headline?: string | null }> = {}
+    if (
+      process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    ) {
+      try {
+        const supa = serverSupabase()
+        const { data } = await supa
+          .from("analyses")
+          .select("lsoa_code, area_name, parsed_dossier")
+          .in(
+            "lsoa_code",
+            candidates.map((c) => c.code)
+          )
+        if (data) {
+          for (const row of data) {
+            const head = row.parsed_dossier?.vulnerability_summary?.headline
+              ?? row.parsed_dossier?.place_archetype
+              ?? null
+            priorAnalyses[row.lsoa_code] = {
+              area_name: row.area_name ?? null,
+              headline: head,
+            }
+          }
+        }
+      } catch {
+        // ignore — agent gets metadata only
+      }
+    }
+
+    return {
+      target_lsoa: lsoa_code,
+      neighbours: candidates.map((c) => ({
+        lsoa_code: c.code,
+        name: c.record.name,
+        vulnerability_score: c.record.vulnerability_score,
+        imd_decile: c.record.imd_decile,
+        canopy_cover_pct: c.record.canopy_cover_pct,
+        prior_analysis: priorAnalyses[c.code] ?? null,
+        distance: Math.round(c.dist * 1000) / 1000,
+      })),
+    }
+  },
+})
+
 export const tools = {
   get_lsoa_context,
   query_lsoa_subset,
@@ -821,4 +905,5 @@ export const tools = {
   scrape_funding_page,
   get_fallback_funds,
   critique_funding_match,
+  compare_to_similar_lsoas,
 }
